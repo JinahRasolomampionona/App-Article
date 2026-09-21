@@ -125,6 +125,57 @@ class WordPressApiServiceTest extends TestCase
         $this->assertSame([1, 2, 3], $seen);
     }
 
+    /**
+     * Connexion lente : une page trop lourde est redemandée en plus petit,
+     * sans perdre ni dupliquer d'article, au lieu d'arrêter la synchronisation.
+     */
+    public function test_une_page_trop_lente_est_redemandee_en_plus_petit(): void
+    {
+        config(['articleguard.http.posts_per_page' => 20, 'articleguard.http.retry_times' => 1]);
+        $timedOut = false;
+
+        Http::fake(function (Request $request) use (&$timedOut) {
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+            $perPage = (int) $query['per_page'];
+            $page = (int) $query['page'];
+
+            // Première page OK, la deuxième expire en taille 20.
+            if ($page === 2 && $perPage === 20) {
+                $timedOut = true;
+                throw new ConnectionException('cURL error 28: Operation timed out');
+            }
+
+            $ids = range(($page - 1) * $perPage + 1, min(50, $page * $perPage));
+
+            return Http::response(
+                array_map(fn ($id) => ['id' => $id], $ids),
+                200,
+                ['X-WP-Total' => 50, 'X-WP-TotalPages' => (int) ceil(50 / $perPage)],
+            );
+        });
+
+        $seen = [];
+        $count = $this->api->eachPost($this->site, function (array $posts) use (&$seen) {
+            foreach ($posts as $post) {
+                $seen[] = $post['id'];
+            }
+        });
+
+        $this->assertTrue($timedOut);
+        $this->assertSame(50, $count);
+        $this->assertSame(range(1, 50), $seen);
+        Http::assertSent(fn (Request $request) => str_contains($request->url(), 'per_page=10'));
+    }
+
+    public function test_les_reponses_sont_demandees_compressees(): void
+    {
+        Http::fake(['*' => Http::response([], 200, ['X-WP-Total' => 0, 'X-WP-TotalPages' => 1])]);
+
+        $this->api->fetchPostsPage($this->site);
+
+        Http::assertSent(fn (Request $request) => str_contains($request->header('Accept-Encoding')[0] ?? '', 'gzip'));
+    }
+
     public function test_le_contexte_edit_est_demande_quand_des_credentials_existent(): void
     {
         Http::fake(['*' => Http::response([], 200, ['X-WP-Total' => 0, 'X-WP-TotalPages' => 1])]);

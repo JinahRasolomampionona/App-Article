@@ -89,11 +89,28 @@ class QueueHealth
     }
 
     /**
-     * Message d'aide destiné à l'interface, ou `null` si la file va bien.
+     * L'application relance elle-même un worker (`QueueWorkerLauncher`) :
+     * une file bloquée se débloque sans intervention de l'utilisateur.
+     */
+    public function recoversAutomatically(): bool
+    {
+        return (bool) config('articleguard.queue.autostart', true) && ! $this->runsInline();
+    }
+
+    /**
+     * File bloquée qui attend une action manuelle : seul cas à signaler.
+     */
+    public function needsManualWorker(): bool
+    {
+        return ! $this->recoversAutomatically() && $this->isStalled();
+    }
+
+    /**
+     * Message d'aide destiné à l'interface, ou `null` si rien n'est à faire.
      */
     public function warning(): ?string
     {
-        if (! $this->isStalled()) {
+        if (! $this->needsManualWorker()) {
             return null;
         }
 

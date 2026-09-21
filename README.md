@@ -98,11 +98,12 @@ CREATE DATABASE articleguard_wp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
 ### Appels vers WordPress
 
 ```dotenv
-WP_HTTP_TIMEOUT=20          # timeout par requête (s)
+WP_HTTP_TIMEOUT=60          # timeout par requête (s)
 WP_HTTP_CONNECT_TIMEOUT=8   # timeout de connexion (s)
 WP_HTTP_RETRY_TIMES=2       # nouvelles tentatives (erreurs réseau uniquement)
 WP_HTTP_RETRY_SLEEP=300     # attente entre tentatives (ms)
-WP_PER_PAGE=100             # taille de page demandée à l'API WordPress
+WP_PER_PAGE=100             # taille de page (catégories, médias)
+WP_POSTS_PER_PAGE=20        # articles par page ; réduite seule (→ 10 → 5) si la connexion est trop lente
 ```
 
 ### Protection SSRF
@@ -179,12 +180,32 @@ Les traitements longs — synchronisation d'un site, audit d'un site entier,
 analyse des images — sont exécutés en file d'attente afin de ne jamais bloquer
 le navigateur.
 
+`QUEUE_CONNECTION=database` par défaut (la table `jobs` est créée par les
+migrations).
+
+### Démarrage automatique du worker
+
+Aucune commande manuelle n'est nécessaire : dès qu'un site est connecté
+(« Connecter et synchroniser »), qu'une synchronisation ou un audit est lancé,
+l'application démarre elle-même en arrière-plan
+`php artisan queue:work --stop-when-empty` (`App\Services\QueueWorkerLauncher`).
+Le worker traite la synchronisation puis les audits, et s'arrête seul quand la
+file est vide. Si le suivi de synchronisation constate une file bloquée, un
+nouveau worker est relancé.
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `AG_QUEUE_AUTOSTART` | `true` | `false` si un worker permanent (Supervisor, systemd) est en place |
+| `AG_PHP_BINARY` | auto | Chemin du PHP CLI si la détection échoue (ex. `C:\xampp\php\php.exe`) |
+| `AG_QUEUE_SPAWN_COOLDOWN` | `15` | Secondes minimales entre deux démarrages automatiques |
+| `AG_QUEUE_MAX_TIME` | `3600` | Durée de vie maximale d'un worker démarré automatiquement |
+| `DB_QUEUE_RETRY_AFTER` | `960` | Doit rester supérieur au timeout de la synchronisation (900 s) |
+
+En production, un worker permanent reste préférable :
+
 ```bash
 php artisan queue:work
 ```
-
-`QUEUE_CONNECTION=database` par défaut (la table `jobs` est créée par les
-migrations).
 
 **Sans worker en cours d'exécution :**
 
@@ -193,7 +214,8 @@ migrations).
 - l'audit d'un article depuis son écran d'édition (« Relancer ») fonctionne
   quand même : il s'exécute en direct, images comprises.
 
-L'application détecte ce cas (`App\Services\QueueHealth`) : un bandeau
+Ce cas ne se produit que si `AG_QUEUE_AUTOSTART=false`. L'application le
+détecte alors (`App\Services\QueueHealth`) : un bandeau
 d'avertissement apparaît sur toutes les pages et le suivi de synchronisation
 s'arrête au lieu de tourner dans le vide. Le worker est lancé automatiquement
 par `composer dev`, qui démarre serveur, file, logs et Vite ensemble.

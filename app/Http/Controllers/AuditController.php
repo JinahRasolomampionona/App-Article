@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\AuditSiteJob;
 use App\Models\ArticleAuditIssue;
+use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
 use App\Support\IssueCatalog;
 use Illuminate\Http\JsonResponse;
@@ -14,6 +15,7 @@ class AuditController extends Controller
 {
     public function __construct(
         protected SiteContext $context,
+        protected QueueWorkerLauncher $worker,
     ) {}
 
     public function index(Request $request): View
@@ -76,6 +78,7 @@ class AuditController extends Controller
         $this->authorize('sync', $site);
 
         AuditSiteJob::dispatch($site, onlyStale: $request->boolean('only_stale', false));
+        $this->worker->ensureRunning();
 
         return response()->json([
             'ok' => true,

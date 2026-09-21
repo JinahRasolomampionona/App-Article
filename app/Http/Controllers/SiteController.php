@@ -7,6 +7,7 @@ use App\Http\Requests\UpdateSiteRequest;
 use App\Jobs\SynchronizeSiteJob;
 use App\Models\WordpressSite;
 use App\Services\QueueHealth;
+use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
 use App\Services\WordPress\SiteConnectionService;
 use Illuminate\Http\JsonResponse;
@@ -20,6 +21,7 @@ class SiteController extends Controller
         protected SiteContext $context,
         protected SiteConnectionService $connection,
         protected QueueHealth $queue,
+        protected QueueWorkerLauncher $worker,
     ) {}
 
     public function index(): View
@@ -35,7 +37,7 @@ class SiteController extends Controller
             'sites' => $sites,
             // Sans worker, un « en cours » resterait affiché indéfiniment :
             // la vue doit pouvoir dire que rien n'avance.
-            'queueStalled' => $this->queue->isStalled(),
+            'queueStalled' => $this->queue->needsManualWorker(),
         ]);
     }
 
@@ -76,6 +78,7 @@ class SiteController extends Controller
             $site->forceFill(['sync_status' => 'queued', 'sync_message' => null])->save();
 
             SynchronizeSiteJob::dispatch($site);
+            $this->worker->ensureRunning();
 
             return redirect()
                 ->route('sites.index')
@@ -161,6 +164,7 @@ class SiteController extends Controller
         $site->forceFill(['sync_status' => 'queued', 'sync_message' => null])->save();
 
         SynchronizeSiteJob::dispatch($site);
+        $this->worker->ensureRunning();
 
         return response()->json([
             'ok' => true,
@@ -179,6 +183,12 @@ class SiteController extends Controller
 
         $site->loadCount(['articles', 'categories']);
 
+        // File bloquée (worker arrêté entre-temps) : on en relance un plutôt
+        // que de laisser l'utilisateur taper une commande.
+        if ($this->queue->isStalled()) {
+            $this->worker->ensureRunning();
+        }
+
         return response()->json([
             'sync_status' => $site->sync_status,
             'sync_message' => $site->sync_message,
@@ -190,7 +200,7 @@ class SiteController extends Controller
             'status_variant' => $site->statusVariant(),
             // Sans worker, `sync_status` resterait « queued » indéfiniment :
             // l'interface doit pouvoir le dire au lieu de tourner dans le vide.
-            'queue_stalled' => $this->queue->isStalled(),
+            'queue_stalled' => $this->queue->needsManualWorker(),
             'queue_warning' => $this->queue->warning(),
         ]);
     }

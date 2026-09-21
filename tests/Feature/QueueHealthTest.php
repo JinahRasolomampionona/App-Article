@@ -52,6 +52,20 @@ class QueueHealthTest extends TestCase
     }
 
     /**
+     * Avec le démarrage automatique, l'application relance elle-même un
+     * worker : demander une commande manuelle n'aurait plus de sens.
+     */
+    public function test_aucune_alerte_quand_le_worker_demarre_automatiquement(): void
+    {
+        config(['articleguard.queue.autostart' => true]);
+        $this->pushJob(createdSecondsAgo: 120);
+
+        $this->assertTrue($this->health->isStalled());
+        $this->assertFalse($this->health->needsManualWorker());
+        $this->assertNull($this->health->warning());
+    }
+
+    /**
      * Un worker occupé par un job long réserve sa ligne : ce cas ne doit pas
      * être confondu avec une file abandonnée.
      */

@@ -21,7 +21,10 @@ use Illuminate\Support\Facades\Log;
 class WordPressApiService
 {
     /** Champs récupérés pour un article : limite fortement le volume transféré. */
-    private const POST_FIELDS = 'id,date,date_gmt,modified,modified_gmt,slug,link,title,content,excerpt,featured_media,categories,status,author';
+    /** Plancher du repli : en dessous, la lenteur ne vient plus de la taille. */
+    private const MIN_POSTS_PER_PAGE = 5;
+
+    private const POST_FIELDS ='id,date,date_gmt,modified,modified_gmt,slug,link,title,content,excerpt,featured_media,categories,status,author';
 
     public function __construct(
         protected UrlGuard $guard,
@@ -234,7 +237,7 @@ class WordPressApiService
     {
         $params = array_merge([
             'page' => $page,
-            'per_page' => $this->perPage(),
+            'per_page' => $this->postsPerPage(),
             'orderby' => 'date',
             'order' => 'desc',
             '_fields' => self::POST_FIELDS,
@@ -308,11 +311,35 @@ class WordPressApiService
      */
     public function eachPost(WordpressSite $site, callable $onPage, int $maxArticles = 5000): int
     {
+        $perPage = $this->postsPerPage();
         $page = 1;
         $seen = 0;
 
         do {
-            $result = $this->fetchPostsPage($site, $page);
+            try {
+                $result = $this->fetchPostsPage($site, $page, ['per_page' => $perPage]);
+            } catch (WordPressApiException $e) {
+                $smaller = $this->smallerPageSize($perPage, $seen);
+
+                // Page trop lourde pour la connexion : on la redemande en plus
+                // petit plutôt que d'abandonner toute la synchronisation.
+                if ($e->reason !== 'unreachable' || $smaller === null) {
+                    throw $e;
+                }
+
+                Log::info('Page d’articles trop lente, taille réduite', [
+                    'site_id' => $site->id,
+                    'per_page' => $perPage,
+                    'next_per_page' => $smaller,
+                ]);
+
+                // Pages déjà lues toutes pleines : `$seen` est un multiple de
+                // la nouvelle taille, la reprise se fait sans trou ni doublon.
+                $perPage = $smaller;
+                $page = intdiv($seen, $perPage) + 1;
+
+                continue;
+            }
 
             if ($result->items === []) {
                 break;
@@ -324,6 +351,21 @@ class WordPressApiService
         } while ($result->hasMorePages() && $seen < $maxArticles);
 
         return $seen;
+    }
+
+    /**
+     * Taille de page réduite de moitié, ou `null` au plancher. Elle doit
+     * diviser `$seen` pour que le calcul de la page suivante reste exact.
+     */
+    protected function smallerPageSize(int $perPage, int $seen): ?int
+    {
+        for ($size = intdiv($perPage, 2); $size >= self::MIN_POSTS_PER_PAGE; $size--) {
+            if ($seen % $size === 0) {
+                return $size;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -576,7 +618,12 @@ class WordPressApiService
         $config = config('articleguard.http');
 
         $request = Http::acceptJson()
-            ->withHeaders(['User-Agent' => $config['user_agent']])
+            ->withHeaders([
+                'User-Agent' => $config['user_agent'],
+                // Le JSON des articles se compresse environ 4 fois : décisif sur
+                // une connexion lente. Guzzle décompresse la réponse lui-même.
+                'Accept-Encoding' => 'gzip, deflate',
+            ])
             ->timeout($config['timeout'])
             ->connectTimeout($config['connect_timeout'])
             ->retry(
@@ -707,5 +754,14 @@ class WordPressApiService
     protected function perPage(): int
     {
         return (int) config('articleguard.http.per_page', 100);
+    }
+
+    /**
+     * Les articles transportent leur contenu complet (en double avec
+     * `context=edit`) : des pages plus courtes que pour les catégories.
+     */
+    protected function postsPerPage(): int
+    {
+        return max(self::MIN_POSTS_PER_PAGE, min($this->perPage(), (int) config('articleguard.http.posts_per_page', 20)));
     }
 }

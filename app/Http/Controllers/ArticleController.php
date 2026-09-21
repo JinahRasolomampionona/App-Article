@@ -8,6 +8,7 @@ use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
 use App\Services\Audit\AuditService;
 use App\Services\Audit\AuditSettings;
+use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
 use App\Services\WordPress\WordPressApiException;
 use App\Services\WordPress\WordPressArticleService;
@@ -26,6 +27,7 @@ class ArticleController extends Controller
         protected AuditService $audit,
         protected WordPressArticleService $articles,
         protected WordPressSyncService $sync,
+        protected QueueWorkerLauncher $worker,
     ) {}
 
     /**
@@ -133,6 +135,7 @@ class ArticleController extends Controller
         );
 
         AuditArticleJob::dispatch($article, 'save');
+        $this->worker->ensureRunning();
 
         $article->refresh()->load('categories');
 
@@ -226,6 +229,10 @@ class ArticleController extends Controller
 
         foreach ($articles as $article) {
             AuditArticleJob::dispatch($article, 'bulk');
+        }
+
+        if ($articles->isNotEmpty()) {
+            $this->worker->ensureRunning();
         }
 
         return response()->json([

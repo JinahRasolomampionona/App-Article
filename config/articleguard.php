@@ -24,11 +24,13 @@ return [
     */
 
     'http' => [
-        'timeout' => (int) env('WP_HTTP_TIMEOUT', 20),
+        'timeout' => (int) env('WP_HTTP_TIMEOUT', 60),
         'connect_timeout' => (int) env('WP_HTTP_CONNECT_TIMEOUT', 8),
         'retry_times' => (int) env('WP_HTTP_RETRY_TIMES', 2),
         'retry_sleep' => (int) env('WP_HTTP_RETRY_SLEEP', 300),
         'per_page' => min(100, max(1, (int) env('WP_PER_PAGE', 100))),
+        // Articles : contenu complet, pages plus courtes (réduites seules si trop lentes).
+        'posts_per_page' => min(100, max(5, (int) env('WP_POSTS_PER_PAGE', 20))),
         'user_agent' => 'ArticleGuardWP/1.0 (+https://articleguard.local)',
     ],
 
@@ -141,5 +143,27 @@ return [
         // Garde-fou : nombre maximum d'articles récupérés par synchronisation.
         'max_articles' => 5000,
         'articles_per_page' => 20,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Worker de file d'attente automatique
+    |--------------------------------------------------------------------------
+    |
+    | Lorsqu'une synchronisation ou un audit est programmé, l'application
+    | démarre elle-même un `queue:work --stop-when-empty` en arrière-plan :
+    | aucune commande manuelle n'est nécessaire. À désactiver si un worker
+    | permanent (Supervisor, systemd…) est déjà en place.
+    |
+    */
+
+    'queue' => [
+        'autostart' => (bool) env('AG_QUEUE_AUTOSTART', true),
+        // Binaire PHP CLI à utiliser (détecté automatiquement si vide).
+        'php_binary' => env('AG_PHP_BINARY'),
+        // Délai minimal (secondes) entre deux démarrages automatiques.
+        'spawn_cooldown' => (int) env('AG_QUEUE_SPAWN_COOLDOWN', 15),
+        // Durée de vie maximale d'un worker démarré automatiquement.
+        'max_time' => (int) env('AG_QUEUE_MAX_TIME', 3600),
     ],
 ];
