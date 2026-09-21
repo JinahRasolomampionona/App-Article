@@ -91,6 +91,12 @@
             <span class="ag-badge ag-badge--{{ $article->statusVariant() }}">
                 {{ $article->statusLabel() }}
             </span>
+        @elseif($article->audit_status === \App\Models\WordpressArticle::AUDIT_PENDING)
+            {{-- Pas encore audité : ne pas laisser croire à un article sans problème. --}}
+            <span class="ag-badge ag-badge--muted" data-bs-toggle="tooltip"
+                  title="L’audit de cet article est en attente ou en cours.">
+                <i class="bi bi-hourglass-split" aria-hidden="true"></i> En attente d’analyse
+            </span>
         @else
             <span class="ag-hint">—</span>
         @endif
