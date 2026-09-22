@@ -226,12 +226,6 @@ class WordPressArticleService
         $attributes = $this->mapper->toAttributes($post);
         $attributes['synced_at'] = now();
 
-        // La réponse d'écriture ne demande pas l'extrait (voir
-        // WordPressApiService::EDIT_RESPONSE_FIELDS) : on garde celui connu.
-        if (! array_key_exists('excerpt', $post)) {
-            unset($attributes['excerpt']);
-        }
-
         $mediaId = $attributes['featured_media_id'];
 
         if ($mediaId <= 0) {

@@ -33,7 +33,7 @@ return [
         'retry_sleep' => (int) env('WP_HTTP_RETRY_SLEEP', 300),
         'per_page' => min(100, max(1, (int) env('WP_PER_PAGE', 100))),
         // Articles : contenu complet, pages plus courtes (réduites seules si trop lentes).
-        'posts_per_page' => min(100, max(5, (int) env('WP_POSTS_PER_PAGE', 20))),
+        'posts_per_page' => min(100, max(5, (int) env('WP_POSTS_PER_PAGE', 50))),
         'user_agent' => 'ArticleGuardWP/1.0 (+https://articleguard.local)',
     ],
 

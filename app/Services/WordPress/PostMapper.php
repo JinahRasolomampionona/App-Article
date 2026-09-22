@@ -46,7 +46,7 @@ class PostMapper
             'slug' => $this->truncate(isset($post['slug']) ? (string) $post['slug'] : null, self::MAX_SLUG),
             'link' => $this->truncate(isset($post['link']) ? (string) $post['link'] : null, self::MAX_LINK),
             'content' => $this->field($post, 'content'),
-            'excerpt' => $this->plainText($this->field($post, 'excerpt')),
+            'excerpt' => $this->excerpt($post),
             'featured_media_id' => (int) ($post['featured_media'] ?? 0),
             'status' => (string) ($post['status'] ?? 'publish'),
             'author_wp_id' => isset($post['author']) ? (int) $post['author'] : null,
@@ -129,6 +129,31 @@ class PostMapper
         }
 
         return mb_strlen($value) > $length ? mb_substr($value, 0, $length) : $value;
+    }
+
+    /**
+     * Extrait saisi dans WordPress, ou à défaut les premiers mots du contenu —
+     * comme le fait WordPress (55 mots), sans lui demander de le calculer :
+     * c'est l'un des champs les plus coûteux de l'API.
+     *
+     * @param  array<string, mixed>  $post
+     */
+    protected function excerpt(array $post): string
+    {
+        $excerpt = $this->plainText($this->field($post, 'excerpt'));
+
+        if ($excerpt !== '') {
+            return $excerpt;
+        }
+
+        // Shortcodes retirés : leur syntaxe n'a rien à faire dans un extrait.
+        $content = preg_replace('/\[\/?[a-zA-Z][^\]]*\]/', ' ', $this->field($post, 'content')) ?? '';
+        $content = preg_replace('#<(script|style)\b[^>]*>.*?</\1>#is', ' ', $content) ?? $content;
+        $words = preg_split('/\s+/u', $this->plainText(str_replace('<', ' <', $content)), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        return count($words) > 55
+            ? implode(' ', array_slice($words, 0, 55)).'…'
+            : implode(' ', $words);
     }
 
     protected function plainText(string $value): string

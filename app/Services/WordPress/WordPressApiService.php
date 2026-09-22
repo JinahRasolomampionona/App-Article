@@ -24,18 +24,25 @@ class WordPressApiService
     /** Plancher du repli : en dessous, la lenteur ne vient plus de la taille. */
     private const MIN_POSTS_PER_PAGE = 5;
 
-    private const POST_FIELDS ='id,date,date_gmt,modified,modified_gmt,slug,link,title,content,excerpt,featured_media,categories,status,author';
+    /**
+     * Champs d'un article en lecture publique.
+     *
+     * `excerpt` est volontairement absent : faute d'extrait saisi, WordPress
+     * le fabrique en appliquant une seconde fois tous les filtres
+     * `the_content` — mesuré, cela double le temps de réponse. L'extrait est
+     * déduit localement du contenu (voir PostMapper).
+     */
+    private const POST_FIELDS = 'id,date,date_gmt,modified,modified_gmt,slug,link,title,content,featured_media,categories,status,author';
 
     /**
-     * Champs demandés en réponse à une écriture (`context=edit`).
+     * Champs d'un article en `context=edit` (listes, lecture, réponse d'écriture).
      *
      * Ne demander que `raw` évite à WordPress d'appliquer les filtres
      * `the_content` (shortcodes, blocs, plugins…) pour produire un `rendered`
      * que l'application n'utilise pas : sur un site chargé, c'est l'essentiel
-     * du temps de réponse. L'extrait est omis pour la même raison — WordPress
-     * le génère à partir du contenu rendu.
+     * du temps de réponse. `excerpt.raw` est l'extrait saisi, sans calcul.
      */
-    private const EDIT_RESPONSE_FIELDS = 'id,date,date_gmt,modified,modified_gmt,slug,link,title.raw,content.raw,featured_media,categories,status,author';
+    private const EDIT_POST_FIELDS = 'id,date,date_gmt,modified,modified_gmt,slug,link,title.raw,content.raw,excerpt.raw,featured_media,categories,status,author';
 
     public function __construct(
         protected UrlGuard $guard,
@@ -244,7 +251,7 @@ class WordPressApiService
      *
      * @param  array<string, mixed>  $extra
      */
-    public function fetchPostsPage(WordpressSite $site, int $page = 1, array $extra = []): PaginatedResult
+    public function fetchPostsPage(WordpressSite $site, int $page = 1, array $extra = [], bool $editContext = true): PaginatedResult
     {
         $params = array_merge([
             'page' => $page,
@@ -256,14 +263,15 @@ class WordPressApiService
 
         $url = $this->endpoint($site, '/posts');
 
-        if (! $site->canEditContent()) {
+        if (! $editContext || ! $site->canEditContent()) {
             return $this->getPaginated($site, $url, $params);
         }
 
-        $editParams = $params + [
+        $editParams = array_merge($params, [
             'context' => 'edit',
             'status' => 'any',
-        ];
+            '_fields' => self::EDIT_POST_FIELDS,
+        ]);
 
         try {
             return $this->getPaginated($site, $url, $editParams);
@@ -325,10 +333,25 @@ class WordPressApiService
         $perPage = $this->postsPerPage();
         $page = 1;
         $seen = 0;
+        $editContext = true;
 
-        do {
+        // Boucle à sorties explicites : un `continue` dans un `do … while`
+        // évaluerait la condition sur la page qu'on vient d'écarter.
+        while (true) {
             try {
-                $result = $this->fetchPostsPage($site, $page, ['per_page' => $perPage]);
+                $result = $this->fetchPostsPage($site, $page, ['per_page' => $perPage], $editContext);
+
+                if ($editContext && $site->canEditContent() && $this->editListingIsFiltered($site, $result)) {
+                    // Toute la liste est relue en mode public, depuis le début :
+                    // les deux modes ne numérotent pas les pages de la même façon
+                    // (brouillons inclus ou non). Les pages déjà traitées sont
+                    // simplement réécrites à l'identique.
+                    $editContext = false;
+                    $page = 1;
+                    $seen = 0;
+
+                    continue;
+                }
             } catch (WordPressApiException $e) {
                 $smaller = $this->smallerPageSize($perPage, $seen);
 
@@ -359,9 +382,47 @@ class WordPressApiService
             $onPage($result->items, $result);
             $seen += count($result->items);
             $page++;
-        } while ($result->hasMorePages() && $seen < $maxArticles);
+
+            if (! $result->hasMorePages() || $seen >= $maxArticles) {
+                break;
+            }
+        }
 
         return $seen;
+    }
+
+    /**
+     * La page lue en `context=edit` a-t-elle été amputée par WordPress ?
+     *
+     * En `context=edit`, WordPress retire silencieusement de la réponse les
+     * articles que le compte ne peut pas modifier — tous ceux des autres
+     * rédacteurs pour un compte « Auteur ». Les en-têtes `X-WP-Total` comptent
+     * pourtant ces articles : la page revient vide ou incomplète sans erreur,
+     * et la synchronisation concluait à tort que le site n'avait aucun
+     * article. Seul le nombre d'éléments réellement reçus le révèle.
+     */
+    protected function editListingIsFiltered(WordpressSite $site, PaginatedResult $result): bool
+    {
+        $expected = max(0, min($result->perPage, $result->total - ($result->page - 1) * $result->perPage));
+
+        // Certains plugins de permissions remettent aussi le total à zéro :
+        // une première page vide vaut une vérification en mode public.
+        if ($result->page === 1 && $result->items === []) {
+            $expected = 1;
+        }
+
+        if (count($result->items) >= $expected) {
+            return false;
+        }
+
+        Log::warning('Liste d’articles restreinte en mode édition : lecture des articles publiés', [
+            'site_id' => $site->id,
+            'page' => $result->page,
+            'expected' => $expected,
+            'received' => count($result->items),
+        ]);
+
+        return true;
     }
 
     /**
@@ -392,7 +453,7 @@ class WordPressApiService
         }
 
         try {
-            return $this->get($site, $url, $params + ['context' => 'edit']);
+            return $this->get($site, $url, ['context' => 'edit', '_fields' => self::EDIT_POST_FIELDS]);
         } catch (WordPressApiException $e) {
             if (! $this->isEditContextRefusal($e)) {
                 throw $e;
@@ -422,7 +483,7 @@ class WordPressApiService
         }
 
         $url = $this->endpoint($site, '/posts/'.$wpId);
-        $query = http_build_query(['context' => 'edit', '_fields' => self::EDIT_RESPONSE_FIELDS]);
+        $query = http_build_query(['context' => 'edit', '_fields' => self::EDIT_POST_FIELDS]);
         $timeout = max((int) config('articleguard.http.timeout'), (int) config('articleguard.http.write_timeout', 90));
 
         $response = $this->send(
@@ -448,7 +509,7 @@ class WordPressApiService
     {
         return $this->get($site, $this->endpoint($site, '/posts/'.$wpId), [
             'context' => 'edit',
-            '_fields' => self::EDIT_RESPONSE_FIELDS,
+            '_fields' => self::EDIT_POST_FIELDS,
         ]);
     }
 

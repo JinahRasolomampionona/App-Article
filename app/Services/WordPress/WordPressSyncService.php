@@ -150,7 +150,7 @@ class WordPressSyncService
             $removed = $site->articles()->whereNotIn('wp_id', $seenWpIds)->delete();
         }
 
-        return ['synced' => count($seenWpIds), 'removed' => $removed];
+        return ['synced' => count(array_unique($seenWpIds)), 'removed' => $removed];
     }
 
     /**

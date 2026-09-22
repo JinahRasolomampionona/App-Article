@@ -110,9 +110,14 @@ class WordPressApiServiceTest extends TestCase
 
     public function test_tous_les_articles_sont_parcourus_page_par_page(): void
     {
-        Http::fakeSequence()
-            ->push([['id' => 1], ['id' => 2]], 200, ['X-WP-Total' => 3, 'X-WP-TotalPages' => 2])
-            ->push([['id' => 3]], 200, ['X-WP-Total' => 3, 'X-WP-TotalPages' => 2]);
+        Http::fake(function (Request $request) {
+            parse_str((string) parse_url($request->url(), PHP_URL_QUERY), $query);
+
+            return match ((int) $query['page']) {
+                1 => Http::response([['id' => 1], ['id' => 2]], 200, ['X-WP-Total' => 3, 'X-WP-TotalPages' => 2]),
+                default => Http::response([['id' => 3]], 200, ['X-WP-Total' => 3, 'X-WP-TotalPages' => 2]),
+            };
+        });
 
         $seen = [];
         $count = $this->api->eachPost($this->site, function (array $posts) use (&$seen) {
@@ -225,6 +230,87 @@ class WordPressApiServiceTest extends TestCase
         // Le constat est mémorisé : les pages suivantes n'essaient plus.
         $this->assertFalse($this->site->fresh()->wp_can_edit);
         $this->assertTrue($this->site->fresh()->isReadOnlyAccount());
+    }
+
+    /**
+     * Compte « Auteur » dont un plugin restreint la liste en mode édition à
+     * ses propres articles : WordPress répond 200 avec une liste vide. La
+     * synchronisation doit récupérer les articles publiés plutôt que rien.
+     */
+    public function test_une_liste_vide_en_mode_edition_bascule_sur_les_articles_publies(): void
+    {
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), 'context=edit')) {
+                return Http::response([], 200, ['X-WP-Total' => 0, 'X-WP-TotalPages' => 0]);
+            }
+
+            return Http::response([
+                ['id' => 7, 'title' => ['rendered' => 'Publié A']],
+                ['id' => 8, 'title' => ['rendered' => 'Publié B']],
+            ], 200, ['X-WP-Total' => 2, 'X-WP-TotalPages' => 1]);
+        });
+
+        $ids = [];
+        $this->api->eachPost($this->site, function (array $posts) use (&$ids) {
+            $ids = [...$ids, ...array_column($posts, 'id')];
+        });
+
+        $this->assertSame([7, 8], $ids);
+        // Le compte garde ses droits : seule la liste est lue en mode public.
+        $this->assertNull($this->site->fresh()->wp_can_edit);
+    }
+
+    public function test_une_liste_complete_en_mode_edition_ne_bascule_pas(): void
+    {
+        Http::fake(fn () => Http::response([['id' => 7]], 200, ['X-WP-Total' => 1, 'X-WP-TotalPages' => 1]));
+
+        $ids = [];
+        $this->api->eachPost($this->site, function (array $posts) use (&$ids) {
+            $ids = [...$ids, ...array_column($posts, 'id')];
+        });
+
+        $this->assertSame([7], $ids);
+        // Une page complète suffit à conclure : aucune requête de contrôle.
+        Http::assertSentCount(1);
+    }
+
+    /**
+     * Cas réel (compte « Auteur ») : WordPress annonce tous les articles dans
+     * `X-WP-Total` mais retire de la page ceux que le compte ne peut pas
+     * modifier. La page revient vide ou incomplète, sans erreur.
+     */
+    public function test_une_page_edition_amputee_malgre_le_total_bascule_sur_les_articles_publies(): void
+    {
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), 'context=edit')) {
+                return Http::response([['id' => 7, 'title' => ['raw' => 'Le mien']]], 200, ['X-WP-Total' => 3, 'X-WP-TotalPages' => 1]);
+            }
+
+            return Http::response([
+                ['id' => 7, 'title' => ['rendered' => 'Le mien']],
+                ['id' => 8, 'title' => ['rendered' => 'Autre A']],
+                ['id' => 9, 'title' => ['rendered' => 'Autre B']],
+            ], 200, ['X-WP-Total' => 3, 'X-WP-TotalPages' => 1]);
+        });
+
+        $ids = [];
+        $this->api->eachPost($this->site, function (array $posts) use (&$ids) {
+            $ids = [...$ids, ...array_column($posts, 'id')];
+        });
+
+        $this->assertSame([7, 8, 9], $ids);
+        $this->assertNull($this->site->fresh()->wp_can_edit);
+    }
+
+    public function test_la_liste_en_mode_edition_ne_demande_que_le_html_brut(): void
+    {
+        Http::fake(fn () => Http::response([['id' => 7]], 200, ['X-WP-Total' => 1, 'X-WP-TotalPages' => 1]));
+
+        $this->api->fetchPostsPage($this->site);
+
+        // Ni `rendered` ni extrait calculé : ce sont les champs les plus coûteux.
+        Http::assertSent(fn (Request $request) => str_contains(urldecode($request->url()), 'content.raw')
+            && ! str_contains(urldecode($request->url()), 'excerpt,'));
     }
 
     public function test_un_site_marque_en_lecture_seule_ne_redemande_pas_le_contexte_edit(): void
