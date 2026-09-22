@@ -227,6 +227,84 @@ class ArticleManagementTest extends TestCase
             ->assertJsonPath('message', 'Accès refusé par WordPress. Le compte utilisé n’a pas les droits nécessaires sur cet article.');
     }
 
+    /**
+     * Sur un site lent, WordPress termine souvent l'enregistrement après que
+     * la connexion a expiré de notre côté : la relecture doit le constater
+     * plutôt que d'annoncer un échec, et l'écriture ne doit pas être rejouée.
+     */
+    public function test_une_mise_a_jour_expiree_mais_enregistree_est_confirmee(): void
+    {
+        Queue::fake();
+
+        $article = $this->article('Ancien titre', [
+            'wp_id' => 100,
+            'wordpress_modified_at' => now()->subDay(),
+        ]);
+
+        $timeout = Http::failedConnection('cURL error 28: Operation timed out after 90001 milliseconds with 0 bytes received');
+
+        Http::fake(function ($request) use ($timeout) {
+            if ($request->method() === 'POST') {
+                return $timeout($request);
+            }
+
+            return Http::response([
+                'id' => 100,
+                'slug' => 'ancien-titre',
+                'modified_gmt' => now()->toIso8601String(),
+                'title' => ['raw' => 'Nouveau titre'],
+                'content' => ['raw' => '<p>Nouveau.</p>'],
+                'featured_media' => 0,
+                'categories' => [],
+                'status' => 'publish',
+            ]);
+        });
+
+        $this->actingAs($this->user)
+            ->putJson(route('articles.update', $article), [
+                'title' => 'Nouveau titre',
+                'content' => '<p>Nouveau.</p>',
+            ])
+            ->assertOk()
+            ->assertJsonPath('ok', true);
+
+        $this->assertSame('Nouveau titre', $article->fresh()->title);
+        Http::assertSentCount(2);
+    }
+
+    public function test_une_mise_a_jour_expiree_non_confirmee_affiche_une_erreur(): void
+    {
+        Queue::fake();
+
+        $article = $this->article('Ancien titre', ['wp_id' => 100]);
+
+        $timeout = Http::failedConnection('cURL error 28: Operation timed out after 90001 milliseconds with 0 bytes received');
+
+        Http::fake(function ($request) use ($timeout, $article) {
+            if ($request->method() === 'POST') {
+                return $timeout($request);
+            }
+
+            return Http::response([
+                'id' => 100,
+                'modified_gmt' => $article->wordpress_modified_at?->toIso8601String(),
+                'title' => ['raw' => 'Ancien titre'],
+                'content' => ['raw' => (string) $article->content],
+                'featured_media' => 0,
+                'categories' => [],
+                'status' => 'publish',
+            ]);
+        });
+
+        $response = $this->actingAs($this->user)->putJson(route('articles.update', $article), [
+            'title' => 'Nouveau titre',
+        ]);
+
+        $response->assertStatus(502)->assertJsonPath('ok', false);
+        $this->assertStringContainsString('n’a pas pu être confirmée', $response->json('message'));
+        $this->assertSame('Ancien titre', $article->fresh()->title);
+    }
+
     public function test_une_categorie_d_un_autre_site_est_refusee(): void
     {
         $article = $this->article('Titre');
@@ -293,6 +371,25 @@ class ArticleManagementTest extends TestCase
         $this->actingAs($intrus)->get(route('sites.edit', $this->site))->assertForbidden();
         $this->actingAs($intrus)->postJson(route('sites.sync', $this->site))->assertForbidden();
         $this->actingAs($intrus)->delete(route('sites.destroy', $this->site))->assertForbidden();
+    }
+
+    public function test_une_synchronisation_deja_en_cours_n_est_pas_relancee(): void
+    {
+        Queue::fake();
+
+        $this->site->forceFill(['sync_status' => 'running'])->save();
+
+        $this->actingAs($this->user)
+            ->postJson(route('sites.sync', $this->site))
+            ->assertOk()
+            ->assertJson(['already_running' => true, 'queue_warning' => null]);
+
+        Queue::assertNothingPushed();
+        $this->assertSame('running', $this->site->fresh()->sync_status);
+
+        $this->actingAs($this->user)
+            ->getJson(route('sites.sync-status', $this->site))
+            ->assertJson(['sync_status' => 'running', 'queue_stalled' => false]);
     }
 
     public function test_l_audit_en_masse_ignore_les_articles_d_un_autre_compte(): void

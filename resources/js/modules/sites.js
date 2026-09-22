@@ -13,6 +13,14 @@ export function initSites() {
         return;
     }
 
+    // Synchronisation déjà en cours au chargement (lancée depuis une autre
+    // page ou par `wp:sync`) : on la suit pour mettre la carte à jour.
+    root.querySelectorAll('[data-sync-progress][data-pending="1"]').forEach((progress) => {
+        const row = progress.closest('[data-site-row]');
+        const button = row?.querySelector('[data-sync-url]');
+        watch(row, button, busy(button, 'En cours…'));
+    });
+
     root.addEventListener('click', async (event) => {
         const testButton = event.target.closest('[data-test-url]');
         const syncButton = event.target.closest('[data-sync-url]');
@@ -39,7 +47,7 @@ export function initSites() {
 
             try {
                 const data = await http.post(syncButton.dataset.syncUrl, {});
-                notify.success(data.message);
+                (data.already_running ? notify.info : notify.success)(data.message);
                 watch(row, syncButton, done);
             } catch (error) {
                 notify.error(error.message);
@@ -83,12 +91,12 @@ export function initSites() {
         let attempts = 0;
         let stopped = false;
 
-        function stop({ stalledQueue = false } = {}) {
+        function stop({ stalledQueue = false, keepProgress = false } = {}) {
             if (stopped) return;
             stopped = true;
 
             clearInterval(timer);
-            if (progress) progress.hidden = true;
+            if (progress) progress.hidden = keepProgress;
             if (stalled) stalled.hidden = !stalledQueue;
             releaseButton();
         }
@@ -106,8 +114,9 @@ export function initSites() {
                 if (categories) categories.textContent = data.categories_count;
 
                 // File d'attente sans worker : inutile de sonder pendant
-                // quatre minutes un travail que personne n'exécutera.
-                if (data.queue_stalled) {
+                // quatre minutes un travail que personne n'exécutera. Un site
+                // « running » est déjà traité (worker ou `wp:sync`) : on attend.
+                if (data.queue_stalled && data.sync_status === 'queued') {
                     stop({ stalledQueue: true });
                     notify.error(data.queue_warning ?? 'Aucun worker ne traite la file d’attente.');
                     return;
@@ -131,9 +140,10 @@ export function initSites() {
                 // Une erreur ponctuelle de sondage ne doit pas casser le suivi.
             }
 
-            // ~4 minutes de suivi maximum.
+            // ~4 minutes de suivi maximum. Un gros site peut prendre plus
+            // longtemps : le message reste affiché, le bouton est rendu.
             if (attempts > 96) {
-                stop();
+                stop({ keepProgress: true });
             }
         }, 2500);
     }

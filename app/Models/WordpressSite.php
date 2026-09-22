@@ -86,6 +86,20 @@ class WordpressSite extends Model
     }
 
     /**
+     * Une synchronisation est-elle effectivement en cours d'exécution ?
+     *
+     * `running` est posé par le worker ou par `wp:sync` au démarrage : quelqu'un
+     * traite déjà le site. Passé un délai raisonnable sans nouvelle, l'état est
+     * considéré comme abandonné (processus tué) pour ne pas bloquer une relance.
+     */
+    public function isSyncRunning(): bool
+    {
+        return $this->sync_status === 'running'
+            && $this->updated_at !== null
+            && $this->updated_at->gt(now()->subMinutes(30));
+    }
+
+    /**
      * Compte authentifié mais sans droit d'écriture : les articles publiés
      * restent consultables, les modifications seront refusées par WordPress.
      */

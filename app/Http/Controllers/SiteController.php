@@ -161,6 +161,18 @@ class SiteController extends Controller
     {
         $this->authorize('sync', $site);
 
+        // Déjà en cours (worker ou `wp:sync`) : relancer ne ferait qu'empiler
+        // un second job concurrent sur le même site.
+        if ($site->isSyncRunning()) {
+            return response()->json([
+                'ok' => true,
+                'status' => $site->sync_status,
+                'already_running' => true,
+                'message' => 'La synchronisation est déjà lancée. Patientez quelques minutes.',
+                'queue_warning' => null,
+            ]);
+        }
+
         $site->forceFill(['sync_status' => 'queued', 'sync_message' => null])->save();
 
         SynchronizeSiteJob::dispatch($site);
@@ -200,8 +212,10 @@ class SiteController extends Controller
             'status_variant' => $site->statusVariant(),
             // Sans worker, `sync_status` resterait « queued » indéfiniment :
             // l'interface doit pouvoir le dire au lieu de tourner dans le vide.
-            'queue_stalled' => $this->queue->needsManualWorker(),
-            'queue_warning' => $this->queue->warning(),
+            // Un site « running » est déjà pris en charge : seul un « queued »
+            // peut attendre un worker absent.
+            'queue_stalled' => $site->sync_status === 'queued' && $this->queue->needsManualWorker(),
+            'queue_warning' => $site->sync_status === 'queued' ? $this->queue->warning() : null,
         ]);
     }
 

@@ -26,6 +26,17 @@ class WordPressApiService
 
     private const POST_FIELDS ='id,date,date_gmt,modified,modified_gmt,slug,link,title,content,excerpt,featured_media,categories,status,author';
 
+    /**
+     * Champs demandés en réponse à une écriture (`context=edit`).
+     *
+     * Ne demander que `raw` évite à WordPress d'appliquer les filtres
+     * `the_content` (shortcodes, blocs, plugins…) pour produire un `rendered`
+     * que l'application n'utilise pas : sur un site chargé, c'est l'essentiel
+     * du temps de réponse. L'extrait est omis pour la même raison — WordPress
+     * le génère à partir du contenu rendu.
+     */
+    private const EDIT_RESPONSE_FIELDS = 'id,date,date_gmt,modified,modified_gmt,slug,link,title.raw,content.raw,featured_media,categories,status,author';
+
     public function __construct(
         protected UrlGuard $guard,
     ) {}
@@ -411,14 +422,34 @@ class WordPressApiService
         }
 
         $url = $this->endpoint($site, '/posts/'.$wpId);
+        $query = http_build_query(['context' => 'edit', '_fields' => self::EDIT_RESPONSE_FIELDS]);
+        $timeout = max((int) config('articleguard.http.timeout'), (int) config('articleguard.http.write_timeout', 90));
 
         $response = $this->send(
             $site,
-            fn (PendingRequest $request) => $request->post($url.'?context=edit&_fields='.self::POST_FIELDS, $payload),
+            fn (PendingRequest $request) => $request->timeout($timeout)->post($url.'?'.$query, $payload),
             $url,
+            write: true,
         );
 
         return $this->decode($response);
+    }
+
+    /**
+     * Version d'édition d'un article, allégée comme la réponse d'une écriture.
+     *
+     * Sert à vérifier une mise à jour dont la réponse n'est pas arrivée :
+     * WordPress a souvent terminé l'enregistrement alors que la connexion a
+     * expiré de notre côté.
+     *
+     * @return array<string, mixed>
+     */
+    public function fetchPostForEdit(WordpressSite $site, int $wpId): array
+    {
+        return $this->get($site, $this->endpoint($site, '/posts/'.$wpId), [
+            'context' => 'edit',
+            '_fields' => self::EDIT_RESPONSE_FIELDS,
+        ]);
     }
 
     /*
@@ -586,7 +617,7 @@ class WordPressApiService
      *
      * @param  callable(PendingRequest): Response  $callback
      */
-    protected function send(WordpressSite $site, callable $callback, string $url, bool $authenticated = true): Response
+    protected function send(WordpressSite $site, callable $callback, string $url, bool $authenticated = true, bool $write = false): Response
     {
         try {
             $this->guard->assertSafe($url);
@@ -595,7 +626,7 @@ class WordPressApiService
         }
 
         try {
-            $response = $callback($this->request($site, $authenticated));
+            $response = $callback($this->request($site, $authenticated, $write));
         } catch (ConnectionException $e) {
             Log::warning('WordPress injoignable', [
                 'site_id' => $site->id,
@@ -613,7 +644,13 @@ class WordPressApiService
         throw $this->translate($response, $site, $url);
     }
 
-    protected function request(WordpressSite $site, bool $authenticated = true): PendingRequest
+    /**
+     * @param  bool  $write  Écriture : on ne la rejoue que si elle n'a jamais
+     *                       atteint WordPress. Un délai dépassé en attendant la
+     *                       réponse signifie que WordPress traite déjà
+     *                       l'écriture ; la renvoyer doublerait l'attente.
+     */
+    protected function request(WordpressSite $site, bool $authenticated = true, bool $write = false): PendingRequest
     {
         $config = config('articleguard.http');
 
@@ -630,7 +667,8 @@ class WordPressApiService
                 max(1, $config['retry_times']),
                 $config['retry_sleep'],
                 // Un 4xx ne sera jamais résolu par un nouvel essai.
-                fn ($exception) => $exception instanceof ConnectionException,
+                fn ($exception) => $exception instanceof ConnectionException
+                    && (! $write || ! $this->isResponseTimeout($exception)),
                 throw: false,
             );
 
@@ -642,6 +680,15 @@ class WordPressApiService
         }
 
         return $request;
+    }
+
+    /**
+     * cURL 28 « Operation timed out » : la connexion était établie et la
+     * requête envoyée, seule la réponse a manqué.
+     */
+    public function isResponseTimeout(\Throwable $exception): bool
+    {
+        return str_contains($exception->getMessage(), 'Operation timed out');
     }
 
     /**

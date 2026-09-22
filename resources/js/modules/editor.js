@@ -26,7 +26,8 @@ export function initEditor() {
     const form = document.getElementById('ag-article-form');
     const surface = root.querySelector('[data-editor-surface]');
     const source = root.querySelector('[data-editor-source]');
-    const tabs = root.querySelectorAll('[data-editor-tab]');
+    // Les onglets sont dans l'en-tête de la carte, hors de `root`.
+    const tabs = document.querySelectorAll('[data-editor-tab]');
     const picker = createMediaPicker();
 
     const titleInput = document.getElementById('ag-title');
@@ -74,7 +75,11 @@ export function initEditor() {
 
         mode = next;
 
-        tabs.forEach((tab) => tab.classList.toggle('is-active', tab.dataset.editorTab === next));
+        tabs.forEach((tab) => {
+            tab.classList.toggle('is-active', tab.dataset.editorTab === next);
+            tab.setAttribute('aria-selected', String(tab.dataset.editorTab === next));
+        });
+        root.querySelector('.ag-editor__toolbar')?.toggleAttribute('hidden', next !== 'visual');
         surface.hidden = next !== 'visual';
         source.hidden = next !== 'source';
         (next === 'visual' ? surface : source).focus();
@@ -201,19 +206,25 @@ export function initEditor() {
 
                 return `
                 <div class="ag-image-row" data-image-index="${index}">
-                    <img src="${escapeAttribute(src)}" alt="" loading="lazy">
-                    <div class="flex-grow-1 min-w-0">
-                        <div class="ag-mono text-truncate" title="${escapeAttribute(src)}">${escapeHtml(
-                            fileNameOf(src),
-                        )}</div>
-                        <input type="text" class="form-control form-control-sm mt-1" value="${escapeAttribute(
-                            alt,
-                        )}" placeholder="Texte alternatif" data-image-alt
-                            aria-label="Texte alternatif de l'image ${index + 1}">
+                    <div class="ag-image-row__head">
+                        <img src="${escapeAttribute(src)}" alt="" loading="lazy">
+                        <div class="ag-image-row__meta">
+                            <span class="ag-image-row__index">Image ${index + 1}</span>
+                            <a class="ag-image-row__name ag-mono" href="${escapeAttribute(src)}"
+                               target="_blank" rel="noopener noreferrer" title="${escapeAttribute(src)}">${escapeHtml(
+                                fileNameOf(src),
+                            )}</a>
+                        </div>
                     </div>
-                    <div class="d-flex flex-column gap-1">
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-image-replace>Remplacer</button>
-                        <button type="button" class="btn btn-sm btn-outline-danger" data-image-remove>Retirer</button>
+                    <textarea class="form-control form-control-sm" rows="2" placeholder="Texte alternatif"
+                        data-image-alt aria-label="Texte alternatif de l'image ${index + 1}">${escapeHtml(alt)}</textarea>
+                    <div class="ag-image-row__actions">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-image-replace>
+                            <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Remplacer
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-image-remove>
+                            <i class="bi bi-trash me-1" aria-hidden="true"></i>Retirer
+                        </button>
                     </div>
                 </div>`;
             })
@@ -296,6 +307,15 @@ export function initEditor() {
         const button = form.querySelector('[data-save]');
         const done = busy(button, 'Envoi à WordPress…');
 
+        // Un site lent peut mettre plus d'une minute à enregistrer : on le dit,
+        // pour que l'attente ne passe pas pour un blocage.
+        const slowNotice = setTimeout(() => {
+            const label = button?.lastChild;
+            if (label?.nodeType === Node.TEXT_NODE) {
+                label.textContent = 'WordPress répond lentement, patientez…';
+            }
+        }, 10000);
+
         const payload = {
             title: titleInput.value,
             content: currentHtml(),
@@ -322,6 +342,7 @@ export function initEditor() {
         } catch (error) {
             notify.error(error.message);
         } finally {
+            clearTimeout(slowNotice);
             done();
         }
     });

@@ -34,7 +34,18 @@ class WordPressArticleService
             return ['article' => $article, 'changed' => []];
         }
 
-        $post = $this->api->updatePost($article->site, $article->wp_id, $payload);
+        $confirmedAfterTimeout = false;
+
+        try {
+            $post = $this->api->updatePost($article->site, $article->wp_id, $payload);
+        } catch (WordPressApiException $e) {
+            if ($e->reason !== 'unreachable') {
+                throw $e;
+            }
+
+            $post = $this->confirmAfterTimeout($article, $payload, $e);
+            $confirmedAfterTimeout = true;
+        }
 
         $this->applyRemoteState($article, $post);
 
@@ -42,9 +53,85 @@ class WordPressArticleService
             'site_id' => $article->wordpress_site_id,
             'wp_id' => $article->wp_id,
             'fields' => array_keys($payload),
+            'confirmed_after_timeout' => $confirmedAfterTimeout,
         ]);
 
         return ['article' => $article, 'changed' => array_keys($payload)];
+    }
+
+    /**
+     * La réponse de WordPress n'est pas arrivée à temps. Sur un site lent,
+     * l'enregistrement est pourtant souvent terminé : on relit l'article pour
+     * le savoir plutôt que d'annoncer un échec — ou de renvoyer l'écriture.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    protected function confirmAfterTimeout(WordpressArticle $article, array $payload, WordPressApiException $timeout): array
+    {
+        try {
+            $post = $this->api->fetchPostForEdit($article->site, $article->wp_id);
+        } catch (WordPressApiException $e) {
+            $post = null;
+        }
+
+        if ($post !== null && $this->wasApplied($article, $post, $payload)) {
+            return $post;
+        }
+
+        Log::warning('Mise à jour WordPress non confirmée', [
+            'site_id' => $article->wordpress_site_id,
+            'wp_id' => $article->wp_id,
+            'detail' => $timeout->context['detail'] ?? null,
+        ]);
+
+        throw new WordPressApiException(
+            'WordPress n’a pas répondu à temps et la mise à jour n’a pas pu être confirmée. '
+            .'Vos modifications restent dans l’éditeur : réessayez dans quelques instants.',
+            'unreachable',
+            null,
+            $timeout->context,
+            $timeout,
+        );
+    }
+
+    /**
+     * L'article distant porte-t-il les modifications envoyées ?
+     *
+     * @param  array<string, mixed>  $post
+     * @param  array<string, mixed>  $payload
+     */
+    protected function wasApplied(WordpressArticle $article, array $post, array $payload): bool
+    {
+        $remote = $this->mapper->toAttributes($post);
+
+        // Toute sauvegarde fait avancer `modified` : c'est la preuve la plus sûre,
+        // WordPress pouvant normaliser le HTML reçu (kses, sauts de ligne…).
+        if ($remote['wordpress_modified_at'] !== null
+            && ($article->wordpress_modified_at === null || $remote['wordpress_modified_at']->gt($article->wordpress_modified_at))) {
+            return true;
+        }
+
+        $normalize = fn ($value) => trim(preg_replace('/\s+/u', ' ', (string) $value) ?? (string) $value);
+
+        foreach ($payload as $field => $value) {
+            $matches = match ($field) {
+                'title' => $normalize($remote['title']) === $normalize(strip_tags((string) $value)),
+                'content' => $normalize($remote['content']) === $normalize($value),
+                'slug' => (string) $remote['slug'] === (string) $value,
+                'status' => $remote['status'] === (string) $value,
+                'featured_media' => $remote['featured_media_id'] === (int) $value,
+                'categories' => collect($this->mapper->categoryIds($post))->sort()->values()->all()
+                    === collect($value)->map('intval')->sort()->values()->all(),
+                default => true,
+            };
+
+            if (! $matches) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
@@ -139,13 +226,29 @@ class WordPressArticleService
         $attributes = $this->mapper->toAttributes($post);
         $attributes['synced_at'] = now();
 
-        if ($attributes['featured_media_id'] > 0) {
-            $media = $this->api->fetchMedia($article->site, $attributes['featured_media_id']);
-            $attributes['featured_media_url'] = isset($media['source_url']) ? (string) $media['source_url'] : null;
-            $attributes['featured_media_alt'] = isset($media['alt_text']) ? (string) $media['alt_text'] : null;
-        } else {
-            $attributes['featured_media_url'] = null;
-            $attributes['featured_media_alt'] = null;
+        // La réponse d'écriture ne demande pas l'extrait (voir
+        // WordPressApiService::EDIT_RESPONSE_FIELDS) : on garde celui connu.
+        if (! array_key_exists('excerpt', $post)) {
+            unset($attributes['excerpt']);
+        }
+
+        $mediaId = $attributes['featured_media_id'];
+
+        if ($mediaId <= 0) {
+            $attributes += $this->mapper->mediaAttributes(null);
+        } elseif ($mediaId !== (int) $article->featured_media_id || ! $article->featured_media_url) {
+            // Un aller-retour de plus seulement si l'image a changé. L'article
+            // est déjà enregistré dans WordPress : un échec ici ne doit pas
+            // le faire passer pour une mise à jour ratée.
+            try {
+                $attributes += $this->mapper->mediaAttributes($this->api->fetchMedia($article->site, $mediaId));
+            } catch (WordPressApiException $e) {
+                Log::warning('Image mise en avant non récupérée après mise à jour', [
+                    'site_id' => $article->wordpress_site_id,
+                    'wp_id' => $article->wp_id,
+                    'media_id' => $mediaId,
+                ]);
+            }
         }
 
         $article->fill($attributes)->save();

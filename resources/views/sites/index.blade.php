@@ -21,7 +21,7 @@
         <div class="ag-card mb-3" data-site-row
              data-status-url="{{ route('sites.sync-status', $site) }}">
             <div class="ag-card__body">
-                <div class="d-flex flex-wrap align-items-start gap-3">
+                <div class="d-flex flex-column flex-md-row align-items-start gap-3">
                     <div class="flex-grow-1 min-w-0">
                         <div class="d-flex align-items-center gap-2 flex-wrap">
                             <h2 class="h6 fw-semibold mb-0">{{ $site->name }}</h2>
@@ -67,19 +67,27 @@
                         </div>
 
                         @php
-                            $pendingSync = in_array($site->sync_status, ['queued', 'running'], true);
+                            // « running » : un worker ou `wp:sync` traite déjà le site.
+                            // Seul un « queued » peut attendre un worker absent.
+                            $syncRunning = $site->isSyncRunning();
+                            $syncStalled = $site->sync_status === 'queued' && $queueStalled;
+                            $pendingSync = $syncRunning || ($site->sync_status === 'queued' && ! $syncStalled);
                         @endphp
+
+                        <div class="d-flex align-items-center gap-2 mt-3" data-sync-progress
+                             data-pending="{{ $pendingSync ? '1' : '0' }}"
+                             @unless($pendingSync) hidden @endunless>
+                            <span class="spinner-border spinner-border-sm text-secondary" aria-hidden="true"></span>
+                            <span class="ag-hint" role="status">
+                                La synchronisation est déjà lancée. Patientez quelques minutes :
+                                les articles apparaissent au fur et à mesure, vous pouvez continuer à naviguer.
+                            </span>
+                        </div>
 
                         {{-- Travail en attente qu'aucun worker ne prendra : le dire
                              plutôt que d'afficher un « en cours » qui n'avancera pas. --}}
-                        <div class="d-flex align-items-center gap-2 mt-3" data-sync-progress
-                             @unless($pendingSync && ! $queueStalled) hidden @endunless>
-                            <span class="spinner-border spinner-border-sm text-secondary" aria-hidden="true"></span>
-                            <span class="ag-hint">Synchronisation en cours… vous pouvez continuer à naviguer.</span>
-                        </div>
-
                         <div class="d-flex align-items-start gap-2 mt-3" data-sync-stalled
-                             @unless($pendingSync && $queueStalled) hidden @endunless>
+                             @unless($syncStalled) hidden @endunless>
                             <i class="bi bi-pause-circle text-warning" aria-hidden="true"></i>
                             <span class="ag-hint">
                                 Synchronisation en attente : aucun worker ne traite la file.
@@ -96,7 +104,7 @@
                         @endif
                     </div>
 
-                    <div class="d-flex flex-wrap gap-2">
+                    <div class="d-flex flex-wrap flex-md-nowrap gap-2 flex-shrink-0">
                         <button type="button" class="btn btn-sm btn-outline-secondary"
                                 data-test-url="{{ route('sites.test', $site) }}">
                             <i class="bi bi-plug me-1" aria-hidden="true"></i> Tester

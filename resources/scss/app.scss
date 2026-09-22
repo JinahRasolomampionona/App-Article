@@ -50,6 +50,12 @@ $dropdown-border-color: $border-color;
 // 3. Design system ArticleGuard
 // -----------------------------------------------------------------------------
 
+// Les utilitaires Bootstrap (`d-flex`…) sont en !important et l'emportent sur
+// l'attribut `hidden` : sans cette règle, un bloc masqué resterait visible.
+[hidden] {
+    display: none !important;
+}
+
 :root {
     --ag-primary: #6c4ce8;
     --ag-primary-dark: #5736c9;
@@ -923,10 +929,13 @@ body {
     background: #f4f5f9;
 }
 
+// Empilé verticalement : la colonne latérale est étroite, et un nom de fichier
+// WordPress (souvent le titre entier, sans espace) ne doit jamais l'élargir.
 .ag-image-row {
     display: flex;
-    gap: 0.75rem;
-    align-items: center;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
     padding: 0.625rem;
     border: 1px solid var(--ag-border);
     border-radius: 9px;
@@ -935,14 +944,72 @@ body {
         margin-top: 0.5rem;
     }
 
-    img {
-        width: 56px;
-        height: 56px;
-        object-fit: cover;
-        border-radius: 6px;
-        flex: none;
-        background: #f4f5f9;
+    &__head {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        min-width: 0;
+
+        img {
+            width: 56px;
+            height: 56px;
+            object-fit: cover;
+            border-radius: 6px;
+            flex: none;
+            border: 1px solid var(--ag-border);
+            background: #f4f5f9;
+        }
     }
+
+    &__meta {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    &__index {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--ag-muted);
+    }
+
+    &__name {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--ag-text);
+        text-decoration: none;
+
+        &:hover,
+        &:focus-visible {
+            color: var(--ag-primary);
+            text-decoration: underline;
+        }
+    }
+
+    textarea {
+        resize: vertical;
+        min-height: 2.5rem;
+        font-size: 0.8125rem;
+    }
+
+    &__actions {
+        display: flex;
+        gap: 0.375rem;
+
+        .btn {
+            flex: 1 1 0;
+            min-width: 0;
+        }
+    }
+}
+
+// Aucun élément du contenu importé ne doit pouvoir élargir la colonne.
+#ag-content-images {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 // --- Graphique donut ---------------------------------------------------------
@@ -1035,6 +1102,52 @@ body {
 
 // Accessibilité : aucune animation si l'utilisateur en a fait la demande
 // au niveau du système.
+// Bloc d'aide repliable (<details>) : fermé par défaut, ouvert à la demande.
+.ag-disclosure {
+    border: 1px solid var(--ag-border);
+    border-radius: $border-radius;
+    background: var(--ag-surface);
+
+    &__summary {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.625rem 0.875rem;
+        cursor: pointer;
+        color: var(--ag-muted);
+        font-weight: 500;
+        list-style: none;
+        border-radius: inherit;
+        transition: color 150ms ease;
+
+        &::-webkit-details-marker {
+            display: none;
+        }
+
+        &:hover {
+            color: var(--ag-primary);
+        }
+
+        &:focus-visible {
+            outline: 2px solid var(--ag-primary);
+            outline-offset: 2px;
+        }
+    }
+
+    &__chevron {
+        transition: transform 200ms ease;
+    }
+
+    &[open] &__chevron {
+        transform: rotate(180deg);
+    }
+
+    &__body {
+        padding: 0 0.875rem 0.875rem;
+        color: var(--ag-text);
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     *,
     *::before,

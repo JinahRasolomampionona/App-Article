@@ -27,7 +27,14 @@
     Nécessaire pour modifier les articles. Sans ces informations, ArticleGuard reste en lecture seule.
 </p>
 
-<div class="alert alert-light border small mb-3" role="note">
+{{-- Aide repliée par défaut : utile une fois, encombrante ensuite. --}}
+<details class="ag-disclosure small mb-3">
+    <summary class="ag-disclosure__summary">
+        <i class="bi bi-info-circle" aria-hidden="true"></i>
+        Comment obtenir une Application Password&nbsp;?
+        <i class="bi bi-chevron-down ag-disclosure__chevron ms-auto" aria-hidden="true"></i>
+    </summary>
+    <div class="ag-disclosure__body">
     <p class="fw-semibold mb-1">L’API REST n’accepte pas le mot de passe de votre compte wp-admin.</p>
     <p class="mb-1">Il faut une <strong>Application Password</strong> dédiée :</p>
     <ol class="mb-1 ps-3">
@@ -44,7 +51,8 @@
             <a href="{{ rtrim($site->url, '/') }}/wp-admin/profile.php#application-passwords" target="_blank" rel="noopener noreferrer">profil WordPress de {{ parse_url($site->url, PHP_URL_HOST) }}</a>.
         @endif
     </p>
-</div>
+    </div>
+</details>
 
 <div class="mb-3">
     <label for="wp_username" class="form-label">Identifiant WordPress</label>

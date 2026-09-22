@@ -114,6 +114,11 @@ class ArticleController extends Controller
      */
     public function update(UpdateArticleRequest $request, WordpressArticle $article): JsonResponse
     {
+        // Écriture (jusqu'à `write_timeout`) puis relecture de vérification :
+        // la limite PHP par défaut couperait la requête avant la fin et le
+        // navigateur ne recevrait qu'une page d'erreur.
+        @set_time_limit((int) config('articleguard.http.write_timeout', 90) + 90);
+
         try {
             $result = $this->articles->update($article, $request->validated());
         } catch (WordPressApiException $e) {
