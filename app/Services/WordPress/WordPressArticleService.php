@@ -35,6 +35,7 @@ class WordPressArticleService
         }
 
         $confirmedAfterTimeout = false;
+        $startedAt = microtime(true);
 
         try {
             $post = $this->api->updatePost($article->site, $article->wp_id, $payload);
@@ -54,6 +55,9 @@ class WordPressArticleService
             'wp_id' => $article->wp_id,
             'fields' => array_keys($payload),
             'confirmed_after_timeout' => $confirmedAfterTimeout,
+            // Durée côté WordPress : permet de distinguer un site lent d'un
+            // ralentissement de l'application.
+            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
         ]);
 
         return ['article' => $article, 'changed' => array_keys($payload)];

@@ -13,6 +13,7 @@ use App\Services\SiteContext;
 use App\Services\WordPress\WordPressApiException;
 use App\Services\WordPress\WordPressArticleService;
 use App\Services\WordPress\WordPressSyncService;
+use App\Services\WordPress\WriteInProgress;
 use App\Support\HtmlContent;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
@@ -120,7 +121,9 @@ class ArticleController extends Controller
         @set_time_limit((int) config('articleguard.http.write_timeout', 90) + 90);
 
         try {
-            $result = $this->articles->update($article, $request->validated());
+            $result = app(WriteInProgress::class)->during(
+                fn () => $this->articles->update($article, $request->validated())
+            );
         } catch (WordPressApiException $e) {
             return response()->json([
                 'ok' => false,

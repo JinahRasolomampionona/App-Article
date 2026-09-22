@@ -59,6 +59,28 @@ class QueueWorkerLauncherTest extends TestCase
         $this->assertCount(1, self::$spawned);
     }
 
+    /**
+     * Un worker occupé par une longue série d'audits ne doit pas être doublé :
+     * plusieurs workers téléchargeant des images en parallèle saturaient la
+     * connexion et ralentissaient l'envoi des articles à WordPress.
+     */
+    public function test_aucun_worker_supplementaire_tant_qu_un_worker_est_actif(): void
+    {
+        QueueWorkerLauncher::heartbeat();
+
+        $this->assertFalse(app(QueueWorkerLauncher::class)->ensureRunning());
+        $this->assertSame([], self::$spawned);
+    }
+
+    public function test_un_worker_arrete_libere_la_place(): void
+    {
+        QueueWorkerLauncher::heartbeat();
+        event(new \Illuminate\Queue\Events\WorkerStopping(0));
+
+        $this->assertTrue(app(QueueWorkerLauncher::class)->ensureRunning());
+        $this->assertCount(1, self::$spawned);
+    }
+
     public function test_desactivable_par_configuration(): void
     {
         config(['articleguard.queue.autostart' => false]);

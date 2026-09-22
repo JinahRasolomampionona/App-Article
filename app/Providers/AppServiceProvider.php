@@ -20,8 +20,14 @@ use App\Services\Audit\Rules\ImageRelevanceRule;
 use App\Services\Audit\Rules\LongTitleRule;
 use App\Services\Audit\Rules\ShortcodeRule;
 use App\Services\QueueHealth;
+use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
 use Illuminate\Pagination\Paginator;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobProcessing;
+use Illuminate\Queue\Events\Looping;
+use Illuminate\Queue\Events\WorkerStopping;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
@@ -95,5 +101,9 @@ class AppServiceProvider extends ServiceProvider
         });
 
         Paginator::useBootstrapFive();
+
+        // Signal de vie du worker (voir QueueWorkerLauncher::ALIVE_KEY).
+        Event::listen([Looping::class, JobProcessing::class, JobProcessed::class], fn () => QueueWorkerLauncher::heartbeat());
+        Event::listen(WorkerStopping::class, fn () => QueueWorkerLauncher::stopped());
     }
 }

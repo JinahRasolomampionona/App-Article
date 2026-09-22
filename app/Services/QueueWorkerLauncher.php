@@ -21,6 +21,47 @@ class QueueWorkerLauncher
     /** Verrou évitant d'empiler des workers sur des clics rapprochés. */
     protected const LOCK_KEY = 'articleguard:queue-worker-spawn';
 
+    /**
+     * Signal de vie d'un worker, entretenu par le worker lui-même.
+     *
+     * Sans lui, chaque sauvegarde lançait un nouveau worker dès la fin du
+     * délai de 15 s, même si le précédent traitait encore la file : plusieurs
+     * workers téléchargeaient alors des images en parallèle et saturaient la
+     * connexion — jusqu'à ralentir l'envoi des articles à WordPress.
+     */
+    public const ALIVE_KEY = 'articleguard:queue-worker-alive';
+
+    /**
+     * Durée de validité du signal : supérieure au plus long job d'audit, pour
+     * qu'un worker occupé ne soit pas pris pour un worker disparu.
+     */
+    public const ALIVE_TTL = 240;
+
+    public static function heartbeat(): void
+    {
+        try {
+            Cache::put(self::ALIVE_KEY, now()->getTimestamp(), self::ALIVE_TTL);
+        } catch (Throwable) {
+        }
+    }
+
+    public static function stopped(): void
+    {
+        try {
+            Cache::forget(self::ALIVE_KEY);
+        } catch (Throwable) {
+        }
+    }
+
+    public function workerIsAlive(): bool
+    {
+        try {
+            return Cache::has(self::ALIVE_KEY);
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
     public function __construct(protected QueueHealth $queue) {}
 
     public function isEnabled(): bool
@@ -36,7 +77,7 @@ class QueueWorkerLauncher
      */
     public function ensureRunning(): bool
     {
-        if (! $this->isEnabled()) {
+        if (! $this->isEnabled() || $this->workerIsAlive()) {
             return false;
         }
 

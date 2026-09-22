@@ -3,6 +3,7 @@
 namespace App\Services\Audit;
 
 use App\Models\ImageAnalysis;
+use App\Services\WordPress\WriteInProgress;
 use App\Support\UnsafeUrlException;
 use App\Support\UrlGuard;
 use Illuminate\Http\Client\ConnectionException;
@@ -74,6 +75,12 @@ class ImageQualityAnalyzer
         }
 
         $maxBytes = (int) config('articleguard.images.max_bytes');
+
+        // Un article est en cours d'envoi à WordPress : l'utilisateur attend,
+        // le téléchargement d'image peut patienter quelques secondes.
+        if (app()->runningInConsole()) {
+            app(WriteInProgress::class)->waitUntilIdle((int) config('articleguard.http.write_timeout', 90));
+        }
 
         try {
             $response = Http::withHeaders(['User-Agent' => config('articleguard.http.user_agent')])

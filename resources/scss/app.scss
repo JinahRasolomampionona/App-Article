@@ -692,10 +692,67 @@ body {
 // --- Éditeur -----------------------------------------------------------------
 
 .ag-editor {
+    position: relative;
     border: 1px solid var(--ag-border);
     border-radius: 10px;
     overflow: hidden;
     background: #fff;
+}
+
+// Images de l'éditeur visuel : cliquables pour ouvrir le panneau d'actions.
+.ag-editor__surface img {
+    cursor: pointer;
+}
+
+.ag-img-frame {
+    position: absolute;
+    z-index: 4;
+    pointer-events: none;
+    border: 2px solid var(--ag-primary);
+    border-radius: 6px;
+    box-shadow: 0 0 0 3px rgba(108, 76, 232, 0.15);
+}
+
+.ag-img-popover {
+    position: absolute;
+    z-index: 5;
+    width: min(320px, calc(100% - 16px));
+    padding: 0.75rem;
+    background: var(--ag-surface);
+    border: 1px solid var(--ag-border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(31, 36, 48, 0.12);
+    font-size: 0.875rem;
+    animation: ag-pop-in 150ms ease-out;
+
+    &__head {
+        display: flex;
+        align-items: center;
+        margin-bottom: 0.5rem;
+        font-size: 0.8125rem;
+    }
+
+    &__actions {
+        display: flex;
+        gap: 0.375rem;
+
+        .btn-primary {
+            flex: 1 1 auto;
+        }
+    }
+}
+
+@keyframes ag-pop-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ag-img-popover {
+        animation: none;
+    }
 }
 
 .ag-editor__toolbar {
