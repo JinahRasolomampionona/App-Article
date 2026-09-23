@@ -39,6 +39,65 @@ class MediaController extends Controller
         return response()->json(['ok' => true] + $library);
     }
 
+    /**
+     * Détails d'un média : sert au panneau « Détails de l'image » de l'éditeur,
+     * qui a besoin des tailles disponibles pour une image déjà dans le contenu.
+     */
+    public function show(WordpressSite $site, int $media): JsonResponse
+    {
+        $this->authorize('view', $site);
+
+        try {
+            $found = $this->media->find($site, $media);
+        } catch (WordPressApiException $e) {
+            return response()->json(['ok' => false, 'message' => $e->getMessage()], 502);
+        }
+
+        if (! $found) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Ce média est introuvable dans la médiathèque WordPress.',
+            ], 404);
+        }
+
+        return response()->json(['ok' => true, 'media' => $found]);
+    }
+
+    /**
+     * Enregistre les métadonnées du média sur WordPress (texte alternatif,
+     * titre, légende, description).
+     */
+    public function update(Request $request, WordpressSite $site, int $media): JsonResponse
+    {
+        $this->authorize('update', $site);
+
+        $validated = $request->validate([
+            'alt_text' => ['present', 'nullable', 'string', 'max:512'],
+            'title' => ['present', 'nullable', 'string', 'max:255'],
+            'caption' => ['present', 'nullable', 'string', 'max:2000'],
+            'description' => ['present', 'nullable', 'string', 'max:5000'],
+        ], [], [
+            'alt_text' => 'texte alternatif',
+            'caption' => 'légende',
+        ]);
+
+        try {
+            $updated = $this->media->updateDetails(
+                $site,
+                $media,
+                array_map(fn ($value) => (string) $value, $validated),
+            );
+        } catch (WordPressApiException $e) {
+            return response()->json(['ok' => false, 'message' => $e->getMessage()], 502);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Détails du fichier enregistrés sur WordPress.',
+            'media' => $updated,
+        ]);
+    }
+
     public function store(Request $request, WordpressSite $site): JsonResponse
     {
         $this->authorize('update', $site);

@@ -10,14 +10,17 @@ use App\Services\Audit\AuditService;
 use App\Services\Audit\AuditSettings;
 use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
+use App\Services\Stats\StatisticsRecorder;
 use App\Services\WordPress\WordPressApiException;
 use App\Services\WordPress\WordPressArticleService;
 use App\Services\WordPress\WordPressSyncService;
 use App\Services\WordPress\WriteInProgress;
+use App\Support\AgentCatalog;
 use App\Support\HtmlContent;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
@@ -44,7 +47,9 @@ class ArticleController extends Controller
                 'site' => null,
                 'articles' => null,
                 'categories' => collect(),
+                'categoryCounts' => [],
                 'filters' => $this->filters($request),
+                'agents' => AgentCatalog::all(),
             ]);
         }
 
@@ -60,6 +65,9 @@ class ArticleController extends Controller
             return response()->json([
                 'html' => view('articles.partials.rows', compact('articles', 'site', 'siteHasArticles'))->render(),
                 'pagination' => view('articles.partials.pagination', compact('articles'))->render(),
+                // Les compteurs de catégories suivent les filtres actifs : le
+                // nombre affiché doit annoncer ce que donnerait la sélection.
+                'category_counts' => $this->categoryCounts($site, $filters),
                 'meta' => [
                     'total' => $articles->total(),
                     'from' => $articles->firstItem(),
@@ -75,7 +83,9 @@ class ArticleController extends Controller
             'articles' => $articles,
             'siteHasArticles' => $siteHasArticles,
             'categories' => $site->categories()->orderBy('name')->get(),
+            'categoryCounts' => $this->categoryCounts($site, $filters),
             'filters' => $filters,
+            'agents' => AgentCatalog::all(),
         ]);
     }
 
@@ -189,6 +199,51 @@ class ArticleController extends Controller
      * nouvel audit. Le moteur d'audit garde le dernier mot : le prochain
      * passage rouvrira les remarques encore présentes.
      */
+    /**
+     * Assigne l'article à un agent, ou retire l'assignation.
+     */
+    public function updateAgent(Request $request, WordpressArticle $article): JsonResponse
+    {
+        $this->authorize('update', $article);
+
+        $request->validate([
+            'agent' => ['present', 'nullable', 'string', Rule::in(AgentCatalog::all())],
+        ], [
+            'agent.in' => 'Agent inconnu.',
+        ], ['agent' => 'agent']);
+
+        $agent = AgentCatalog::normalize($request->input('agent'));
+
+        $article->forceFill([
+            'agent' => $agent,
+            'agent_assigned_at' => $agent ? now() : null,
+        ])->save();
+
+        // Un article déjà conforme porte une correction acquise : elle suit
+        // l'assignation, sinon l'agent ne verrait dans ses statistiques que ce
+        // qu'il a corrigé après coup.
+        $reassigned = app(StatisticsRecorder::class)->reassign($article, $agent);
+
+        return response()->json([
+            'ok' => true,
+            'agent' => $agent,
+            'message' => $this->agentMessage($agent, $reassigned !== null),
+        ]);
+    }
+
+    protected function agentMessage(?string $agent, bool $reassigned): string
+    {
+        if ($agent === null) {
+            return $reassigned
+                ? 'Assignation retirée ; la correction n’est plus attribuée.'
+                : 'Assignation retirée.';
+        }
+
+        return $reassigned
+            ? 'Article assigné à '.$agent.'. La correction lui est attribuée.'
+            : 'Article assigné à '.$agent.'.';
+    }
+
     public function updateStatus(Request $request, WordpressArticle $article): JsonResponse
     {
         $this->authorize('update', $article);
@@ -304,10 +359,46 @@ class ArticleController extends Controller
             ->when($filters['status'] === 'needs_fix', fn ($query) => $query->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX))
             ->when($filters['status'] === 'ok', fn ($query) => $query->whereIn('audit_status', [WordpressArticle::AUDIT_OK, WordpressArticle::AUDIT_FIXED]))
             ->when($filters['status'] === 'pending', fn ($query) => $query->where('audit_status', WordpressArticle::AUDIT_PENDING))
+            ->forAgent($filters['agent'])
             ->orderByDesc('wordpress_published_at')
             ->orderByDesc('wp_id')
             ->paginate($filters['per_page'])
             ->withQueryString();
+    }
+
+    /**
+     * Nombre d'articles par catégorie, compte tenu des autres filtres actifs.
+     *
+     * Le compteur affiché à côté d'une catégorie doit répondre à la question
+     * « combien d'articles obtiendrais-je en cochant celle-ci ? ». Le filtre
+     * de catégorie est donc exclu de son propre calcul en mode « au moins
+     * une » — sinon cocher « Bagues » ramènerait toutes les autres à zéro.
+     * En mode « toutes », les catégories déjà cochées restent appliquées,
+     * puisque la sélection s'y cumule.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array<int, int> total indexé par identifiant de catégorie
+     */
+    protected function categoryCounts(WordpressSite $site, array $filters): array
+    {
+        $articles = $site->articles()
+            ->search($filters['search'])
+            ->when($filters['status'] === 'needs_fix', fn ($query) => $query->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX))
+            ->when($filters['status'] === 'ok', fn ($query) => $query->whereIn('audit_status', [WordpressArticle::AUDIT_OK, WordpressArticle::AUDIT_FIXED]))
+            ->when($filters['status'] === 'pending', fn ($query) => $query->where('audit_status', WordpressArticle::AUDIT_PENDING))
+            ->forAgent($filters['agent'])
+            ->when(
+                $filters['mode'] === 'all' && $filters['categories'] !== [],
+                fn ($query) => $query->inCategories($filters['categories'], 'all'),
+            );
+
+        return DB::table('article_category')
+            ->whereIn('wordpress_article_id', $articles->select('wordpress_articles.id'))
+            ->groupBy('wordpress_category_id')
+            ->selectRaw('wordpress_category_id, count(*) as total')
+            ->pluck('total', 'wordpress_category_id')
+            ->map(fn ($total) => (int) $total)
+            ->all();
     }
 
     /**
@@ -343,6 +434,11 @@ class ArticleController extends Controller
             'status' => in_array($request->query('status'), ['needs_fix', 'ok', 'pending'], true)
                 ? (string) $request->query('status')
                 : 'all',
+            // `none` isole les articles non assignés ; tout autre nom inconnu
+            // est ignoré plutôt que de vider le tableau sans explication.
+            'agent' => $request->query('agent') === 'none'
+                ? 'none'
+                : AgentCatalog::normalize($request->query('agent')),
             'per_page' => in_array($perPage, [10, 20, 50, 100], true) ? $perPage : 20,
         ];
     }

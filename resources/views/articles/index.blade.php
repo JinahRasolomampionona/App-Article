@@ -37,7 +37,7 @@
     <form id="ag-filters" class="ag-card mb-3" method="GET" action="{{ route('articles.index') }}">
         <div class="ag-card__body">
             <div class="row g-3 align-items-end">
-                <div class="col-lg-5">
+                <div class="col-lg-4">
                     <label for="ag-search" class="form-label">Rechercher</label>
                     <div class="position-relative">
                         <i class="bi bi-search position-absolute ag-muted"
@@ -48,13 +48,24 @@
                     </div>
                 </div>
 
-                <div class="col-6 col-lg-3">
+                <div class="col-6 col-lg-2">
                     <label for="ag-status" class="form-label">Statut</label>
                     <select id="ag-status" name="status" class="form-select">
                         <option value="" @selected($filters['status'] === 'all')>Tous</option>
                         <option value="needs_fix" @selected($filters['status'] === 'needs_fix')>À corriger</option>
                         <option value="ok" @selected($filters['status'] === 'ok')>Sans erreur</option>
                         <option value="pending" @selected($filters['status'] === 'pending')>En attente d’audit</option>
+                    </select>
+                </div>
+
+                <div class="col-6 col-lg-2">
+                    <label for="ag-agent" class="form-label">Agent</label>
+                    <select id="ag-agent" name="agent" class="form-select">
+                        <option value="">Tous</option>
+                        <option value="none" @selected($filters['agent'] === 'none')>Non assignés</option>
+                        @foreach($agents as $agent)
+                            <option value="{{ $agent }}" @selected($filters['agent'] === $agent)>{{ $agent }}</option>
+                        @endforeach
                     </select>
                 </div>
 
@@ -94,14 +105,19 @@
                     </div>
                 </div>
 
+                {{-- Le compteur suit les autres filtres actifs : avec
+                     « Statut : à corriger », « Bagues 10 » devient « Bagues 7 »
+                     s'il n'y reste que 7 articles à corriger. --}}
                 <div class="ag-filter-list" role="group" aria-label="Filtrer par catégorie">
                     @foreach($categories as $category)
-                        <label class="ag-filter-check">
+                        @php $count = $categoryCounts[$category->id] ?? 0; @endphp
+                        <label class="ag-filter-check @if($count === 0) is-empty @endif"
+                               data-category-item="{{ $category->id }}">
                             <input type="checkbox" class="form-check-input" name="categories[]"
                                    value="{{ $category->id }}"
                                    @checked(in_array($category->id, $filters['categories'], true))>
                             {{ $category->name }}
-                            <span class="ag-muted">{{ $category->posts_count }}</span>
+                            <span class="ag-muted" data-category-count="{{ $category->id }}">{{ $count }}</span>
                         </label>
                     @endforeach
                 </div>
@@ -148,6 +164,7 @@
                         <th scope="col">URL</th>
                         <th scope="col">Remarques</th>
                         <th scope="col">Statut</th>
+                        <th scope="col">Agent</th>
                         <th scope="col" class="text-end">Actions</th>
                     </tr>
                 </thead>

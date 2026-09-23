@@ -102,6 +102,25 @@
         @endif
     </td>
 
+    {{-- Agent chargé de la correction : assignation libre, indépendante de
+         l'audit. --}}
+    <td>
+        <select class="form-select form-select-sm ag-agent-select"
+                data-agent-url="{{ route('articles.agent', $article) }}"
+                aria-label="Agent assigné à l’article {{ $article->title }}">
+            <option value="">Non assigné</option>
+            @foreach(\App\Support\AgentCatalog::all() as $agent)
+                <option value="{{ $agent }}" @selected($article->agent === $agent)>{{ $agent }}</option>
+            @endforeach
+
+            {{-- L'agent enregistré ne figure plus dans la liste configurée :
+                 il reste proposé pour ne pas effacer l'assignation en silence. --}}
+            @if($article->agent && ! \App\Support\AgentCatalog::has($article->agent))
+                <option value="{{ $article->agent }}" selected>{{ $article->agent }} (retiré)</option>
+            @endif
+        </select>
+    </td>
+
     <td class="text-end">
         <div class="d-inline-flex gap-1">
             <button type="button" class="btn btn-sm btn-outline-secondary"

@@ -2,7 +2,9 @@ import { http } from './http.js';
 import { notify } from './toast.js';
 import { busy } from './busy.js';
 import { createMediaPicker } from './media-picker.js';
+import { createImageDetails } from './image-details.js';
 import { sanitizeHtml } from './sanitize-html.js';
+import { fileNameOf, safeUrl } from './url.js';
 
 /**
  * Éditeur d'article.
@@ -29,6 +31,7 @@ export function initEditor() {
     // Les onglets sont dans l'en-tête de la carte, hors de `root`.
     const tabs = document.querySelectorAll('[data-editor-tab]');
     const picker = createMediaPicker();
+    const imageDetails = createImageDetails({ mediaUrl: picker.indexUrl });
 
     const titleInput = document.getElementById('ag-title');
     const titleCounter = document.getElementById('ag-title-counter');
@@ -159,6 +162,17 @@ export function initEditor() {
             setFeatured(media.id, media.url, media.alt);
         }
 
+        // Rouvre la médiathèque sur l'image déjà choisie : le panneau
+        // « Détails du fichier joint » s'affiche directement sur elle.
+        if (event.target.closest('[data-featured-details]')) {
+            const current = Number(
+                featuredWrapper.querySelector('[name="featured_media_id"]')?.value ?? 0,
+            );
+            const media = await picker.open({ mediaId: current || null });
+            if (!media) return;
+            setFeatured(media.id, media.url, media.alt);
+        }
+
         if (event.target.closest('[data-featured-remove]')) {
             setFeatured(0, null, '');
         }
@@ -170,6 +184,10 @@ export function initEditor() {
         const preview = featuredWrapper.querySelector('[data-featured-preview]');
         const empty = featuredWrapper.querySelector('[data-featured-empty]');
         const removeButton = featuredWrapper.querySelector('[data-featured-remove]');
+        const detailsButton = featuredWrapper.querySelector('[data-featured-details]');
+        const summary = featuredWrapper.querySelector('[data-featured-summary]');
+        const altCell = featuredWrapper.querySelector('[data-featured-alt]');
+        const replaceButton = featuredWrapper.querySelector('[data-featured-replace]');
 
         if (url) {
             preview.src = url;
@@ -177,11 +195,21 @@ export function initEditor() {
             preview.hidden = false;
             empty.hidden = true;
             if (removeButton) removeButton.hidden = false;
+            if (replaceButton) replaceButton.textContent = 'Remplacer';
         } else {
             preview.hidden = true;
             preview.removeAttribute('src');
             empty.hidden = false;
             if (removeButton) removeButton.hidden = true;
+            if (replaceButton) replaceButton.textContent = 'Choisir une image';
+        }
+
+        if (detailsButton) detailsButton.hidden = !id;
+        if (summary) summary.hidden = !url;
+
+        if (altCell) {
+            altCell.textContent = alt || 'Non renseigné';
+            altCell.classList.toggle('is-missing', !alt);
         }
     }
 
@@ -201,43 +229,50 @@ export function initEditor() {
 
         imagesList.innerHTML = images
             .map((img, index) => {
-                const src = img.getAttribute('src') ?? '';
-                const alt = img.getAttribute('alt') ?? '';
-                const link = imageLink(img);
+                const settings = readImageSettings(img);
 
                 return `
                 <div class="ag-image-row" data-image-index="${index}">
                     <div class="ag-image-row__head">
-                        <img src="${escapeAttribute(src)}" alt="" loading="lazy">
+                        <img src="${escapeAttribute(settings.src)}" alt="" loading="lazy">
                         <div class="ag-image-row__meta">
                             <span class="ag-image-row__index">Image ${index + 1}</span>
-                            <a class="ag-image-row__name ag-mono" href="${escapeAttribute(src)}"
-                               target="_blank" rel="noopener noreferrer" title="${escapeAttribute(src)}">${escapeHtml(
-                                fileNameOf(src),
-                            )}</a>
+                            <a class="ag-image-row__name ag-mono" href="${escapeAttribute(settings.src)}"
+                               target="_blank" rel="noopener noreferrer" title="${escapeAttribute(
+                                   settings.src,
+                               )}">${escapeHtml(settings.filename)}</a>
                         </div>
                     </div>
-                    <textarea class="form-control form-control-sm" rows="2" placeholder="Texte alternatif"
-                        data-image-alt aria-label="Texte alternatif de l'image ${index + 1}">${escapeHtml(alt)}</textarea>
-                    <div class="input-group input-group-sm">
-                        <span class="input-group-text" title="Lien de l'image"><i class="bi bi-link-45deg" aria-hidden="true"></i></span>
-                        <input type="url" class="form-control" value="${escapeAttribute(link)}"
-                            placeholder="Lien (optionnel)" data-image-link
-                            aria-label="Lien de l'image ${index + 1}">
-                        <a class="btn btn-outline-secondary${link ? '' : ' disabled'}" href="${escapeAttribute(
-                            link || '#',
-                        )}" target="_blank" rel="noopener noreferrer" data-image-link-open
-                            ${link ? '' : 'aria-disabled="true" tabindex="-1"'}
-                            title="Ouvrir le lien" aria-label="Ouvrir le lien de l'image ${index + 1}">
-                            <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
-                        </a>
+                    <dl class="ag-image-row__summary">
+                        <dt>Texte alternatif</dt>
+                        <dd class="${settings.alt ? '' : 'is-missing'}">${escapeHtml(
+                            settings.alt || 'Non renseigné',
+                        )}</dd>
+                        ${
+                            settings.caption
+                                ? `<dt>Légende</dt><dd>${escapeHtml(settings.caption)}</dd>`
+                                : ''
+                        }
+                        ${
+                            settings.link
+                                ? `<dt>Lien</dt><dd class="text-truncate">${escapeHtml(settings.link)}</dd>`
+                                : ''
+                        }
+                    </dl>
+                    <div class="ag-image-row__tags">
+                        <span class="ag-chip">${escapeHtml(ALIGN_LABELS[settings.align])}</span>
+                        <span class="ag-chip">${escapeHtml(sizeLabel(settings))}</span>
                     </div>
                     <div class="ag-image-row__actions">
+                        <button type="button" class="btn btn-sm btn-outline-primary" data-image-details>
+                            <i class="bi bi-sliders me-1" aria-hidden="true"></i>Détails
+                        </button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-image-replace>
                             <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Remplacer
                         </button>
-                        <button type="button" class="btn btn-sm btn-outline-danger" data-image-remove>
-                            <i class="bi bi-trash me-1" aria-hidden="true"></i>Retirer
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-image-remove
+                                title="Retirer l’image" aria-label="Retirer l’image ${index + 1}">
+                            <i class="bi bi-trash" aria-hidden="true"></i>
                         </button>
                     </div>
                 </div>`;
@@ -251,6 +286,10 @@ export function initEditor() {
 
         const index = Number(row.dataset.imageIndex);
 
+        if (event.target.closest('[data-image-details]')) {
+            await openImageDetails(index);
+        }
+
         if (event.target.closest('[data-image-replace]')) {
             await replaceImageAt(index);
         }
@@ -260,20 +299,44 @@ export function initEditor() {
         }
     });
 
-    imagesList?.addEventListener('change', (event) => {
-        const row = event.target.closest('[data-image-index]');
-        if (!row) return;
+    /* --- Fenêtre « Détails de l'image » ------------------------------------- */
 
-        const index = Number(row.dataset.imageIndex);
+    /**
+     * Ouvre les détails de la n-ième image du contenu, puis applique l'action
+     * choisie. Un remplacement rouvre la fenêtre sur la nouvelle image : c'est
+     * le moment où l'on renseigne son texte alternatif et sa taille.
+     */
+    async function openImageDetails(index) {
+        const settings = imageSettingsAt(index);
+        if (!settings) return;
 
-        if (event.target.closest('[data-image-alt]')) {
-            applyHtml(mutateImage(currentHtml(), index, (img) => img.setAttribute('alt', event.target.value)));
+        const result = await imageDetails.open(settings);
+
+        if (!result) return;
+
+        if (result.action === 'remove') {
+            removeImageAt(index);
+            return;
         }
 
-        if (event.target.closest('[data-image-link]')) {
-            setLinkAt(index, event.target.value);
+        if (result.action === 'replace') {
+            if (await replaceImageAt(index)) {
+                await openImageDetails(index);
+            }
+            return;
         }
-    });
+
+        applyHtml(mutateImage(currentHtml(), index, (img) => applyImageSettings(img, result)));
+        notify.info('Image modifiée. Cliquez sur « Mettre à jour » pour l’envoyer à WordPress.');
+    }
+
+    /** Réglages de la n-ième image, lus dans le HTML de référence. */
+    function imageSettingsAt(index) {
+        const doc = new DOMParser().parseFromString(`<div id="ag-wrap">${currentHtml()}</div>`, 'text/html');
+        const img = doc.querySelectorAll('#ag-wrap img')[index];
+
+        return img ? readImageSettings(img) : null;
+    }
 
     /* --- Actions sur une image (liste et éditeur visuel) --------------------- */
 
@@ -298,21 +361,6 @@ export function initEditor() {
         );
 
         notify.info('Image retirée du contenu.');
-    }
-
-    function setLinkAt(index, value) {
-        const url = safeUrl(value);
-
-        if (url === null) {
-            notify.error('Lien invalide : saisissez une adresse commençant par http:// ou https://.');
-            refreshImagesList();
-            return false;
-        }
-
-        applyHtml(mutateImage(currentHtml(), index, (img) => setImageLink(img, url)));
-        notify.info(url ? 'Lien de l’image mis à jour.' : 'Lien de l’image retiré.');
-
-        return true;
     }
 
     /* --- Sélection d'une image dans l'éditeur visuel ------------------------- */
@@ -371,6 +419,9 @@ export function initEditor() {
 
         if (action === 'close') {
             closePopover();
+        } else if (action === 'details') {
+            closePopover();
+            await openImageDetails(index);
         } else if (action === 'replace') {
             closePopover();
             await replaceImageAt(index);
@@ -631,6 +682,149 @@ function updateBlockId(img, id) {
     }
 }
 
+const ALIGN_LABELS = {
+    none: 'Aucun alignement',
+    left: 'Aligné à gauche',
+    center: 'Centré',
+    right: 'Aligné à droite',
+};
+
+/**
+ * Lit les réglages d'affichage d'une image tels que WordPress les écrit :
+ * classes `align*` et `size-*`, légende dans un `<figcaption>`, lien porté par
+ * un `<a>` englobant, identifiant du média dans `wp-image-{id}`.
+ */
+function readImageSettings(img) {
+    const figure = img.closest('figure');
+    const classes = `${figure?.getAttribute('class') ?? ''} ${img.getAttribute('class') ?? ''}`;
+    const src = img.getAttribute('src') ?? '';
+
+    return {
+        src,
+        filename: fileNameOf(src),
+        alt: img.getAttribute('alt') ?? '',
+        link: imageLink(img),
+        caption: figure?.querySelector('figcaption')?.textContent.trim() ?? '',
+        align: classes.match(/\balign(left|center|right|none)\b/)?.[1] ?? 'none',
+        sizeName: classes.match(/\bsize-([\w-]+)\b/)?.[1] ?? null,
+        width: positiveInt(img.getAttribute('width')),
+        height: positiveInt(img.getAttribute('height')),
+        naturalWidth: positiveInt(img.getAttribute('width')),
+        naturalHeight: positiveInt(img.getAttribute('height')),
+        mediaId: positiveInt(classes.match(/\bwp-image-(\d+)\b/)?.[1]),
+    };
+}
+
+/**
+ * Écrit les réglages choisis dans le HTML de l'article. L'ordre compte : le
+ * lien est posé avant la légende, pour que le `<figure>` englobe le `<a>` et
+ * non l'inverse — c'est la structure attendue par WordPress.
+ */
+function applyImageSettings(img, values) {
+    img.setAttribute('alt', values.alt ?? '');
+
+    if (values.size?.url && values.size.url !== img.getAttribute('src')) {
+        img.setAttribute('src', values.size.url);
+        // Les déclinaisons de l'ancienne taille seraient préférées à `src`.
+        img.removeAttribute('srcset');
+        img.removeAttribute('sizes');
+        img.closest('picture')
+            ?.querySelectorAll('source')
+            .forEach((source) => source.remove());
+    }
+
+    setAttribute(img, 'width', values.width);
+    setAttribute(img, 'height', values.height);
+
+    setImageLink(img, values.link);
+
+    const figure = ensureCaption(img, values.caption);
+    const holder = figure ?? img;
+
+    setClassGroup(holder, /\balign(?:left|center|right|none)\b/g, values.align === 'none' ? null : `align${values.align}`);
+    setClassGroup(holder, /\bsize-[\w-]+\b/g, values.size?.name && values.size.name !== 'custom' ? `size-${values.size.name}` : null);
+
+    // Un réglage posé sur le `<figure>` ne doit pas rester en double sur
+    // l'image : WordPress n'en applique qu'un seul.
+    if (figure) {
+        setClassGroup(img, /\balign(?:left|center|right|none)\b/g, null);
+        setClassGroup(img, /\bsize-[\w-]+\b/g, null);
+    }
+}
+
+/**
+ * Ajoute, met à jour ou retire la légende. Une légende sur une image sans
+ * `<figure>` en crée un ; une légende vidée retire le `<figcaption>` mais
+ * laisse la structure en place, qui peut porter d'autres réglages.
+ */
+function ensureCaption(img, caption) {
+    let figure = img.closest('figure');
+
+    if (!caption) {
+        figure?.querySelector('figcaption')?.remove();
+
+        return figure;
+    }
+
+    if (!figure) {
+        const target = img.closest('a') ?? img;
+        figure = img.ownerDocument.createElement('figure');
+        figure.setAttribute('class', 'wp-block-image');
+        target.replaceWith(figure);
+        figure.appendChild(target);
+    }
+
+    let figcaption = figure.querySelector('figcaption');
+
+    if (!figcaption) {
+        figcaption = img.ownerDocument.createElement('figcaption');
+        figure.appendChild(figcaption);
+    }
+
+    figcaption.textContent = caption;
+
+    return figure;
+}
+
+/** Remplace la classe d'un groupe (alignement, taille) par une autre. */
+function setClassGroup(element, pattern, replacement) {
+    const classes = (element.getAttribute('class') ?? '').replace(pattern, '').trim().replace(/\s+/g, ' ');
+    const next = replacement ? `${classes} ${replacement}`.trim() : classes;
+
+    if (next) {
+        element.setAttribute('class', next);
+    } else {
+        element.removeAttribute('class');
+    }
+}
+
+function setAttribute(element, name, value) {
+    if (value) {
+        element.setAttribute(name, String(value));
+    } else {
+        element.removeAttribute(name);
+    }
+}
+
+function positiveInt(value) {
+    const number = Number.parseInt(value ?? '', 10);
+
+    return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+/** Libellé de la taille affiché dans la liste des images. */
+function sizeLabel(settings) {
+    if (settings.width && settings.height) {
+        return `${settings.width} × ${settings.height} px`;
+    }
+
+    if (settings.sizeName) {
+        return `Taille « ${settings.sizeName} »`;
+    }
+
+    return 'Taille d’origine';
+}
+
 function imageLink(img) {
     return img.closest('a[href]')?.getAttribute('href') ?? '';
 }
@@ -658,21 +852,6 @@ function setImageLink(img, url) {
     link.setAttribute('rel', 'noopener');
     img.replaceWith(link);
     link.appendChild(img);
-}
-
-/**
- * Adresse http(s) valide, chaîne vide si rien n'est saisi, `null` sinon.
- */
-function safeUrl(value) {
-    const trimmed = String(value ?? '').trim();
-    if (!trimmed) return '';
-
-    try {
-        const url = new URL(trimmed);
-        return ['http:', 'https:'].includes(url.protocol) ? trimmed : null;
-    } catch {
-        return null;
-    }
 }
 
 /**
@@ -708,7 +887,11 @@ function createImagePopover(root) {
                     title="Retirer l'image" aria-label="Retirer l'image">
                 <i class="bi bi-trash" aria-hidden="true"></i>
             </button>
-        </div>`;
+        </div>
+        <button type="button" class="btn btn-sm btn-link w-100 mt-1 p-0 text-decoration-none"
+                data-pop="details">
+            <i class="bi bi-sliders me-1" aria-hidden="true"></i>Détails de l’image (légende, alignement, taille)
+        </button>`;
 
     // Cadre de sélection dessiné par-dessus l'image : une classe posée sur
     // l'image elle-même finirait dans le HTML envoyé à WordPress.
@@ -768,14 +951,6 @@ function createImagePopover(root) {
             frame.hidden = true;
         },
     };
-}
-
-function fileNameOf(src) {
-    try {
-        return decodeURIComponent(new URL(src, window.location.origin).pathname.split('/').pop() ?? src);
-    } catch {
-        return src;
-    }
 }
 
 function escapeHtml(value) {

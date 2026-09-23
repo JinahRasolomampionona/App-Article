@@ -62,29 +62,121 @@ class WordPressMediaService
     }
 
     /**
+     * Enregistre les champs du panneau « Détails du fichier joint ».
+     *
+     * @param  array<string, string>  $attributes
+     * @return array<string, mixed>
+     */
+    public function updateDetails(WordpressSite $site, int $mediaId, array $attributes): array
+    {
+        $payload = array_intersect_key($attributes, array_flip([
+            'alt_text', 'title', 'caption', 'description',
+        ]));
+
+        return $this->present($this->api->updateMedia($site, $mediaId, $payload));
+    }
+
+    /**
      * @param  array<string, mixed>  $media
      * @return array<string, mixed>
      */
     protected function present(array $media): array
     {
-        $details = $media['media_details'] ?? [];
+        $details = is_array($media['media_details'] ?? null) ? $media['media_details'] : [];
         $sizes = is_array($details['sizes'] ?? null) ? $details['sizes'] : [];
         $thumbnail = $sizes['thumbnail']['source_url']
             ?? $sizes['medium']['source_url']
             ?? ($media['source_url'] ?? null);
+        $url = (string) ($media['source_url'] ?? '');
 
         return [
             'id' => (int) ($media['id'] ?? 0),
-            'url' => (string) ($media['source_url'] ?? ''),
-            'thumbnail' => is_string($thumbnail) ? $thumbnail : (string) ($media['source_url'] ?? ''),
+            'url' => $url,
+            'thumbnail' => is_string($thumbnail) ? $thumbnail : $url,
             'alt' => (string) ($media['alt_text'] ?? ''),
             'mime' => (string) ($media['mime_type'] ?? ''),
             'width' => isset($details['width']) ? (int) $details['width'] : null,
             'height' => isset($details['height']) ? (int) $details['height'] : null,
-            'title' => is_array($media['title'] ?? null)
-                ? strip_tags((string) ($media['title']['rendered'] ?? ''))
-                : (string) ($media['title'] ?? ''),
+            'title' => $this->plain($media['title'] ?? null),
+            'caption' => $this->plain($media['caption'] ?? null),
+            'description' => $this->plain($media['description'] ?? null),
+            'filename' => $this->filenameOf($details, $url),
+            'uploaded_at' => (string) ($media['date'] ?? ''),
+            'sizes' => $this->presentSizes($sizes, $details, $url),
         ];
+    }
+
+    /**
+     * Déclinaisons proposées par WordPress à l'insertion (miniature, moyenne,
+     * grande, taille originale). L'ordre suit celui de l'éditeur WordPress.
+     *
+     * @param  array<string, mixed>  $sizes
+     * @param  array<string, mixed>  $details
+     * @return array<int, array<string, mixed>>
+     */
+    protected function presentSizes(array $sizes, array $details, string $url): array
+    {
+        $labels = [
+            'thumbnail' => 'Miniature',
+            'medium' => 'Moyenne',
+            'medium_large' => 'Moyenne-grande',
+            'large' => 'Grande',
+            'full' => 'Taille originale',
+        ];
+
+        $presented = [];
+
+        foreach ($labels as $name => $label) {
+            $size = is_array($sizes[$name] ?? null) ? $sizes[$name] : null;
+
+            if ($name === 'full') {
+                $size ??= [
+                    'source_url' => $url,
+                    'width' => $details['width'] ?? null,
+                    'height' => $details['height'] ?? null,
+                ];
+            }
+
+            if (! $size || ! is_string($size['source_url'] ?? null)) {
+                continue;
+            }
+
+            $presented[] = [
+                'name' => $name,
+                'label' => $label,
+                'url' => $size['source_url'],
+                'width' => isset($size['width']) ? (int) $size['width'] : null,
+                'height' => isset($size['height']) ? (int) $size['height'] : null,
+            ];
+        }
+
+        return $presented;
+    }
+
+    /**
+     * WordPress renvoie ces champs sous la forme `['rendered' => '<p>…</p>']`.
+     */
+    protected function plain(mixed $value): string
+    {
+        if (is_array($value)) {
+            $value = $value['raw'] ?? $value['rendered'] ?? '';
+        }
+
+        return trim(html_entity_decode(strip_tags((string) $value), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    }
+
+    /**
+     * @param  array<string, mixed>  $details
+     */
+    protected function filenameOf(array $details, string $url): string
+    {
+        $file = is_string($details['file'] ?? null) ? basename($details['file']) : '';
+
+        if ($file !== '') {
+            return $file;
+        }
+
+        return basename((string) parse_url($url, PHP_URL_PATH));
     }
 
     /**

@@ -2,7 +2,7 @@
     @include('articles.partials.row', ['article' => $article])
 @empty
     <tr>
-        <td colspan="7">
+        <td colspan="8">
             @if(($siteHasArticles ?? true) === false)
                 {{-- Site connecté mais jamais synchronisé : ajuster les filtres n'y changerait rien. --}}
                 <div class="ag-empty py-5">

@@ -4,6 +4,8 @@ import { initArticlesTable } from './modules/articles-table.js';
 import { initEditor } from './modules/editor.js';
 import { initSites, initSiteSwitcher, initQuickSync, initSiteAudit } from './modules/sites.js';
 import { initDonuts } from './modules/donut.js';
+import { initCorrectionsChart } from './modules/corrections-chart.js';
+import { initNavGroups, initSidebarRail } from './modules/nav.js';
 import { initPasswordToggles } from './modules/password-toggle.js';
 import { notify } from './modules/toast.js';
 
@@ -12,6 +14,8 @@ import { notify } from './modules/toast.js';
 window.bootstrap = bootstrap;
 
 document.addEventListener('DOMContentLoaded', () => {
+    initNavGroups();
+    initSidebarRail();
     initSiteSwitcher();
     initSites();
     initQuickSync();
@@ -19,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initArticlesTable();
     initEditor();
     initDonuts();
+    initCorrectionsChart();
     initPasswordToggles();
 
     // Messages flash Laravel relayés dans le système de toasts.

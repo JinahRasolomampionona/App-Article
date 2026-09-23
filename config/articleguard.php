@@ -150,6 +150,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Agents de correction
+    |--------------------------------------------------------------------------
+    |
+    | Personnes à qui un article peut être assigné depuis le tableau. Il ne
+    | s'agit pas de comptes applicatifs : c'est une simple répartition du
+    | travail, conservée dans l'historique des statistiques.
+    |
+    | La liste est surchargeable par `AG_AGENTS` (noms séparés par des virgules).
+    |
+    */
+
+    'agents' => array_values(array_filter(array_map(
+        'trim',
+        explode(',', (string) env('AG_AGENTS', 'Daniella,Niriantsoa,Jinah,Koloina,Miranto'))
+    ))),
+
+    /*
+    |--------------------------------------------------------------------------
     | Worker de file d'attente automatique
     |--------------------------------------------------------------------------
     |

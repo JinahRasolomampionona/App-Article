@@ -109,6 +109,130 @@ body {
     flex-direction: column;
 }
 
+// --- Sidebar réduite en barre d'icônes ---------------------------------------
+
+// Redéfinir la largeur suffit : `.ag-sidebar` et `.ag-main` s'y accrochent
+// déjà, et la valeur calculée reste animable.
+html.ag-nav-collapsed {
+    --ag-sidebar-width: 72px;
+}
+
+.ag-sidebar {
+    transition: width 200ms ease;
+}
+
+.ag-main {
+    transition: margin-left 200ms ease;
+}
+
+.ag-rail-toggle {
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border: 1px solid var(--ag-border);
+    border-radius: 8px;
+    background: var(--ag-surface);
+    color: var(--ag-muted);
+    transition: color var(--ag-transition), border-color var(--ag-transition);
+
+    i {
+        transition: transform 200ms ease;
+    }
+
+    &:hover {
+        color: var(--ag-primary);
+        border-color: var(--ag-primary);
+    }
+
+    &:focus-visible {
+        outline: 2px solid var(--ag-primary);
+        outline-offset: 2px;
+    }
+}
+
+html.ag-nav-collapsed .ag-rail-toggle i {
+    transform: rotate(180deg);
+}
+
+// Tout ce qui suit ne vise que la sidebar fixe : l'offcanvas mobile garde ses
+// libellés en toutes circonstances.
+html.ag-nav-collapsed .ag-sidebar {
+    .ag-brand {
+        justify-content: center;
+        padding-inline: 0;
+
+        > span:last-child {
+            display: none;
+        }
+    }
+
+    .ag-nav {
+        padding-inline: 0.625rem;
+    }
+
+    // Replier une section n'a plus de sens sans ses intertitres : les groupes
+    // sont rouverts et séparés par un simple filet.
+    .ag-nav__section {
+        display: none;
+    }
+
+    .ag-nav__group + .ag-nav__group {
+        margin-top: 0.5rem;
+        padding-top: 0.5rem;
+        border-top: 1px solid var(--ag-border);
+    }
+
+    .ag-nav__items {
+        grid-template-rows: 1fr;
+        opacity: 1;
+        visibility: visible;
+    }
+
+    .ag-nav__link {
+        position: relative;
+        justify-content: center;
+        gap: 0;
+        padding-inline: 0;
+
+        i {
+            font-size: 1.05rem;
+        }
+    }
+
+    .ag-nav__label {
+        display: none;
+    }
+
+    // Le compteur d'articles à corriger devient une pastille sur l'icône :
+    // l'information reste visible sans libellé pour l'accueillir.
+    .ag-nav__badge {
+        position: absolute;
+        top: 0.25rem;
+        right: 0.75rem;
+        margin: 0;
+        min-width: 1rem;
+        padding: 0 0.25rem;
+        font-size: 0.625rem;
+        line-height: 1rem;
+        text-align: center;
+    }
+
+    .ag-user {
+        padding-inline: 0.5rem;
+
+        .flex-grow-1 {
+            display: none;
+        }
+
+        > div {
+            flex-direction: column;
+            gap: 0.375rem !important;
+        }
+    }
+}
+
 @include media-breakpoint-down(lg) {
     .ag-sidebar {
         display: none;
@@ -163,13 +287,67 @@ body {
     overflow-y: auto;
     padding: 0.875rem 0.75rem;
 
+    // Bouton de repli d'une section : garde l'allure d'un simple intertitre.
     &__section {
+        display: flex;
+        align-items: center;
+        gap: 0.375rem;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        text-align: left;
         font-size: 0.6875rem;
         font-weight: 600;
         letter-spacing: 0.08em;
         text-transform: uppercase;
         color: var(--ag-muted);
         padding: 0.75rem 0.5rem 0.375rem;
+        border-radius: 8px;
+
+        &:hover {
+            color: var(--ag-text);
+        }
+
+        &:focus-visible {
+            outline: 2px solid var(--ag-primary);
+            outline-offset: -2px;
+        }
+    }
+
+    &__chevron {
+        font-size: 0.6875rem;
+        transition: transform var(--ag-transition);
+    }
+
+    &__items {
+        display: grid;
+        grid-template-rows: 1fr;
+        // `visibility` retire les liens repliés du parcours clavier ; la
+        // transition la retarde pour ne pas les escamoter avant l'animation.
+        transition: grid-template-rows 200ms ease, opacity var(--ag-transition), visibility 200ms;
+    }
+
+    // Enveloppe unique : animer `grid-template-rows` suppose une seule ligne,
+    // ce qui évite de figer une hauteur en dur pour le repli.
+    &__links {
+        overflow: hidden;
+        min-height: 0;
+    }
+
+    &__group.is-collapsed {
+        .ag-nav__items {
+            grid-template-rows: 0fr;
+            opacity: 0;
+            visibility: hidden;
+        }
+
+        .ag-nav__chevron {
+            transform: rotate(-90deg);
+        }
+
+        .ag-nav__badge--section {
+            display: inline-block;
+        }
     }
 
     &__link {
@@ -211,6 +389,23 @@ body {
         border-radius: 999px;
         background: var(--ag-danger-soft);
         color: var(--ag-danger);
+
+        // Sur l'intertitre, ce compteur ne sert que lorsque les liens — et
+        // donc leur propre badge — sont masqués.
+        &--section {
+            display: none;
+            letter-spacing: 0;
+        }
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ag-nav__items,
+    .ag-nav__chevron,
+    .ag-sidebar,
+    .ag-main,
+    .ag-rail-toggle i {
+        transition: none;
     }
 }
 
@@ -368,6 +563,147 @@ body {
     }
 }
 
+// Trois repères de même largeur, empilés dès que la place manque.
+.ag-stat-row {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+
+    @include media-breakpoint-down(md) {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+// Évolution par rapport à la période précédente. La flèche double la couleur :
+// l'information ne doit pas reposer sur elle seule.
+.ag-trend {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.125rem;
+    margin-left: 0.375rem;
+    font-weight: 600;
+    white-space: nowrap;
+
+    &--up {
+        color: var(--ag-success);
+    }
+
+    &--down {
+        color: var(--ag-muted);
+    }
+}
+
+// --- Barre de conformité -----------------------------------------------------
+
+.ag-progress {
+    height: 10px;
+    border-radius: 999px;
+    background: #eef0f5;
+    overflow: hidden;
+
+    &--sm {
+        height: 6px;
+    }
+
+    &__bar {
+        display: block;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--ag-success);
+        transition: width 250ms ease;
+    }
+}
+
+.ag-headline {
+    font-size: 1.05rem;
+    line-height: 1.6;
+    color: var(--ag-text);
+
+    strong {
+        font-weight: 680;
+    }
+}
+
+// Ligne d'un site supprimé : présente pour l'historique, visiblement inactive.
+.ag-row-archived {
+    background: #fbfbfd;
+
+    .ag-table__title {
+        color: var(--ag-muted);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ag-progress__bar {
+        transition: none;
+    }
+}
+
+// --- Graphique en barres -----------------------------------------------------
+
+.ag-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.375rem;
+    height: 180px;
+
+    &__item {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 0;
+        min-width: 0;
+        height: 100%;
+    }
+
+    &__track {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        align-items: center;
+        flex: 1 1 auto;
+        min-height: 0;
+        border-radius: 6px;
+        background: linear-gradient(to bottom, transparent 0%, #fafbfd 100%);
+    }
+
+    &__bar {
+        display: block;
+        width: 100%;
+        max-width: 42px;
+        min-height: 0;
+        border-radius: 5px 5px 0 0;
+        background: var(--ag-primary);
+        transition: height 250ms ease;
+    }
+
+    &__count {
+        font-size: 0.6875rem;
+        font-weight: 650;
+        color: var(--ag-text);
+        line-height: 1.4;
+    }
+
+    &__label {
+        margin-top: 0.375rem;
+        font-size: 0.6875rem;
+        color: var(--ag-muted);
+        text-align: center;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__item:hover &__bar {
+        background: var(--ag-primary-dark);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ag-bars__bar {
+        transition: none;
+    }
+}
+
 // --- Badges ------------------------------------------------------------------
 
 .ag-badge {
@@ -419,6 +755,25 @@ body {
 
 /* Sélecteur de statut du tableau : reprend les couleurs des badges pour que la
    colonne reste lisible d'un coup d'œil, sans ressembler à un champ de saisie. */
+// Assignation d'un article à un agent. Volontairement plus sobre que le
+// sélecteur de statut : c'est une répartition du travail, pas un état d'audit.
+.ag-agent-select {
+    width: auto;
+    min-width: 8.5rem;
+    font-size: 0.75rem;
+    padding: 0.2rem 1.75rem 0.2rem 0.5rem;
+    border-radius: 8px;
+
+    &:disabled {
+        opacity: 0.6;
+    }
+
+    // Non assigné : l'absence de choix doit se voir sans crier.
+    option[value=''] {
+        color: var(--ag-muted);
+    }
+}
+
 .ag-status-select {
     width: auto;
     min-width: 8.5rem;
@@ -479,6 +834,12 @@ body {
 
     &:hover {
         border-color: #d3d7e3;
+    }
+
+    // Aucune correspondance avec les autres filtres actifs. La case reste
+    // cliquable : la masquer déplacerait les suivantes sous le curseur.
+    &.is-empty:not(:has(input:checked)) {
+        opacity: 0.45;
     }
 
     input {
@@ -802,6 +1163,45 @@ body {
         border-radius: 6px;
     }
 
+    // Reprise des classes WordPress, pour que l'alignement et la légende
+    // choisis dans « Détails de l'image » se voient dès l'onglet Visuel.
+    figure {
+        margin: 1rem 0;
+    }
+
+    figcaption {
+        font-size: 0.8125rem;
+        color: var(--ag-muted);
+        margin-top: 0.375rem;
+    }
+
+    .alignleft {
+        float: left;
+        margin: 0.25rem 1rem 1rem 0;
+    }
+
+    .alignright {
+        float: right;
+        margin: 0.25rem 0 1rem 1rem;
+    }
+
+    .aligncenter {
+        margin-left: auto;
+        margin-right: auto;
+        text-align: center;
+    }
+
+    img.aligncenter {
+        display: block;
+    }
+
+    // Les images flottantes ne doivent pas déborder de la zone d'édition.
+    &::after {
+        content: '';
+        display: block;
+        clear: both;
+    }
+
     h1,
     h2,
     h3 {
@@ -1052,6 +1452,41 @@ body {
         font-size: 0.8125rem;
     }
 
+    // Résumé des réglages : le détail complet s'ouvre dans la fenêtre dédiée,
+    // la colonne reste lisible.
+    &__summary {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.125rem;
+        margin: 0;
+        font-size: 0.8125rem;
+
+        dt {
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--ag-muted);
+        }
+
+        dd {
+            margin: 0 0 0.25rem;
+            color: var(--ag-text);
+            overflow-wrap: anywhere;
+
+            &.is-missing {
+                color: var(--ag-muted);
+                font-style: italic;
+            }
+        }
+    }
+
+    &__tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+
     &__actions {
         display: flex;
         gap: 0.375rem;
@@ -1060,6 +1495,100 @@ body {
             flex: 1 1 0;
             min-width: 0;
         }
+
+        .btn-outline-danger {
+            flex: 0 0 auto;
+        }
+    }
+}
+
+// --- Fenêtres de détails d'image ---------------------------------------------
+
+// Médiathèque : grille à gauche, « Détails du fichier joint » à droite, comme
+// dans WordPress.
+.ag-media-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 1rem;
+    align-items: start;
+
+    @include media-breakpoint-down(md) {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.ag-media-details {
+    border: 1px solid var(--ag-border);
+    border-radius: 10px;
+    padding: 0.875rem;
+    background: #fbfbfd;
+    min-width: 0;
+
+    &__title {
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--ag-muted);
+        margin-bottom: 0.625rem;
+    }
+
+    &__empty {
+        padding: 1.5rem 0;
+        text-align: center;
+    }
+
+    &__head {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        margin-bottom: 0.75rem;
+
+        img {
+            width: 60px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 6px;
+            border: 1px solid var(--ag-border);
+            background: #f4f5f9;
+            flex: none;
+        }
+    }
+
+    &__file {
+        display: block;
+        font-size: 0.75rem;
+        overflow-wrap: anywhere;
+    }
+}
+
+// Image du contenu : aperçu à gauche, réglages à droite.
+.ag-image-details {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+
+    @include media-breakpoint-down(sm) {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    &__preview img {
+        width: 100%;
+        border-radius: 9px;
+        border: 1px solid var(--ag-border);
+        background: #f4f5f9;
+    }
+
+    &__section {
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--ag-muted);
+        padding-top: 0.5rem;
+        margin-bottom: 0.5rem;
+        border-top: 1px solid var(--ag-border);
     }
 }
 

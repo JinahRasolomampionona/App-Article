@@ -196,6 +196,17 @@
                         <p class="ag-hint mb-0">Aucune image à la une</p>
                     </div>
 
+                    {{-- Champs du fichier joint WordPress : ils décrivent le média
+                         lui-même, pas cet article. Renseignés ici, ils suivent
+                         l'image partout où elle est utilisée. --}}
+                    <dl class="ag-image-row__summary mb-2" data-featured-summary
+                        @if(! $article->featured_media_url) hidden @endif>
+                        <dt>Texte alternatif</dt>
+                        <dd data-featured-alt class="{{ $article->featured_media_alt ? '' : 'is-missing' }}">
+                            {{ $article->featured_media_alt ?: 'Non renseigné' }}
+                        </dd>
+                    </dl>
+
                     <div class="d-flex gap-2">
                         <button type="button" class="btn btn-sm btn-outline-primary flex-grow-1"
                                 data-featured-replace>
@@ -206,6 +217,12 @@
                             Retirer
                         </button>
                     </div>
+
+                    <button type="button" class="btn btn-sm btn-link w-100 mt-1 p-0 text-decoration-none"
+                            data-featured-details @if(! $article->featured_media_id) hidden @endif>
+                        <i class="bi bi-sliders me-1" aria-hidden="true"></i>
+                        Détails de l’image (texte alternatif, titre, légende, description, URL)
+                    </button>
                 </div>
             </div>
 

@@ -10,20 +10,32 @@
     <link rel="icon" href="data:image/svg+xml,{{ rawurlencode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="%236c4ce8"/><path d="M16 7l7 3v6c0 4.4-2.9 7.7-7 9-4.1-1.3-7-4.6-7-9v-6l7-3z" fill="white"/></svg>') }}">
 
     @vite(['resources/scss/app.scss', 'resources/js/app.js'])
+
+    {{-- L'état de la sidebar est posé avant le premier rendu : appliqué plus
+         tard, il ferait sauter la mise en page à chaque chargement. --}}
+    <script>
+        try {
+            if (localStorage.getItem('ag.nav.rail') === '1') {
+                document.documentElement.classList.add('ag-nav-collapsed');
+            }
+        } catch (error) {
+            // Stockage indisponible : la sidebar reste déployée.
+        }
+    </script>
 </head>
 <body>
 <div class="ag-shell">
 
     {{-- Sidebar fixe (desktop) --}}
-    <aside class="ag-sidebar">
-        @include('partials.sidebar')
+    <aside class="ag-sidebar" id="ag-sidebar">
+        @include('partials.sidebar', ['navScope' => 'desktop'])
     </aside>
 
     {{-- Sidebar en offcanvas (mobile / tablette) --}}
     <div class="offcanvas offcanvas-start" tabindex="-1" id="ag-sidebar-offcanvas"
          aria-label="Navigation principale" style="width: 268px;">
         <div class="offcanvas-body p-0 d-flex flex-column">
-            @include('partials.sidebar')
+            @include('partials.sidebar', ['navScope' => 'offcanvas'])
         </div>
     </div>
 
@@ -33,6 +45,14 @@
                     data-bs-toggle="offcanvas" data-bs-target="#ag-sidebar-offcanvas"
                     aria-controls="ag-sidebar-offcanvas" aria-label="Ouvrir le menu">
                 <i class="bi bi-list" aria-hidden="true"></i>
+            </button>
+
+            {{-- Réduction de la sidebar : desktop uniquement, l'offcanvas
+                 jouant ce rôle en dessous de « lg ». --}}
+            <button class="ag-rail-toggle d-none d-lg-inline-flex" type="button"
+                    data-nav-rail aria-controls="ag-sidebar" aria-expanded="true">
+                <i class="bi bi-chevron-double-left" aria-hidden="true"></i>
+                <span class="visually-hidden" data-nav-rail-label>Réduire le menu</span>
             </button>
 
             <nav class="ag-breadcrumb d-none d-md-block" aria-label="Fil d'Ariane">

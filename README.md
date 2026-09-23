@@ -20,6 +20,7 @@ modifications étant renvoyées à WordPress.
 - [File d'attente](#file-dattente)
 - [Connecter un site WordPress](#connecter-un-site-wordpress)
 - [Règles d'audit](#règles-daudit)
+- [Statistiques](#statistiques)
 - [Analyse des images](#analyse-des-images)
 - [Sécurité](#sécurité)
 - [Tests](#tests)
@@ -247,6 +248,41 @@ Problèmes ouverts ........ 55
 `--quick` saute les règles qui téléchargent les images (flou, résolution,
 pertinence) : utile pour voir immédiatement les remarques de titre, H1,
 shortcodes et images manquantes, quitte à relancer ensuite un audit complet.
+
+---
+
+## Statistiques
+
+La page **Statistiques** (menu latéral, au-dessus de *Paramètres*) présente :
+
+- l'état courant de tous les sites : total d'articles, part **OK / Corrigés**,
+  et articles **non corrigés** ;
+- le détail par site, avec sa date de dernière correction ;
+- l'**historique des corrections** : chaque article passé à « OK » ou
+  « Corrigé », avec le nom du site et la date ;
+- le rythme des corrections par **jour, semaine ou mois** ;
+- la liste des articles restant à corriger.
+
+L'historique vit dans `article_status_history`, distincte des articles. Le nom
+du site et le titre de l'article y sont recopiés à l'enregistrement : **supprimer
+un site ne supprime pas ses statistiques**, ses lignes restent consultables et
+le site apparaît comme *archivé*. Supprimer le compte utilisateur, en revanche,
+efface bien l'historique.
+
+Une entrée est créée uniquement lors d'un *changement* de statut : réauditer un
+article déjà conforme ne gonfle pas les compteurs. Les corrections déclarées à
+la main depuis le tableau des articles sont conservées mais signalées comme
+telles (« Corrigé manuellement »), un audit restant seul juge de la conformité.
+
+### Reprendre un historique incomplet
+
+```bash
+php artisan stats:sync
+```
+
+La migration initiale reprend déjà les articles conformes existants. Cette
+commande rejoue la même opération — utile après une restauration ou un import
+direct en base. Elle est idempotente : les articles déjà présents sont ignorés.
 
 ---
 

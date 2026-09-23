@@ -44,6 +44,9 @@ export function initArticlesTable() {
         const status = form.querySelector('[name="status"]');
         if (status && status.value) params.set('status', status.value);
 
+        const agent = form.querySelector('[name="agent"]');
+        if (agent && agent.value) params.set('agent', agent.value);
+
         const perPage = form.querySelector('[name="per_page"]');
         if (perPage && perPage.value) params.set('per_page', perPage.value);
 
@@ -85,6 +88,7 @@ export function initArticlesTable() {
                     : 'Aucun article';
             }
 
+            updateCategoryCounts(data.category_counts);
             syncSelection();
         } catch (error) {
             if (error.name === 'AbortError') return;
@@ -92,6 +96,28 @@ export function initArticlesTable() {
         } finally {
             tableWrapper?.classList.remove('ag-table-loading');
         }
+    }
+
+    /**
+     * Met à jour le compteur de chaque catégorie.
+     *
+     * Le chiffre annonce ce que donnerait la sélection compte tenu des autres
+     * filtres actifs : avec « Statut : à corriger », « Bagues 10 » devient
+     * « Bagues 7 ». Une catégorie qui ne ramènerait rien est estompée, sans
+     * être masquée — la faire disparaître déplacerait les cases à cocher sous
+     * le curseur.
+     */
+    function updateCategoryCounts(counts) {
+        if (!counts) return;
+
+        form?.querySelectorAll('[data-category-count]').forEach((element) => {
+            const total = counts[element.dataset.categoryCount] ?? 0;
+
+            element.textContent = String(total);
+            element
+                .closest('[data-category-item]')
+                ?.classList.toggle('is-empty', total === 0);
+        });
     }
 
     /* --- Filtres --- */
@@ -115,6 +141,10 @@ export function initArticlesTable() {
             input.checked = false;
         });
         form.querySelector('[name="status"]').value = '';
+
+        const agentFilter = form.querySelector('[name="agent"]');
+        if (agentFilter) agentFilter.value = '';
+
         const anyMode = form.querySelector('input[name="mode"][value="any"]');
         if (anyMode) anyMode.checked = true;
         if (search) search.value = '';
@@ -255,9 +285,41 @@ export function initArticlesTable() {
         }
     });
 
+    /* --- Agent assigné --- */
+
+    body?.addEventListener('change', async (event) => {
+        const select = event.target.closest('[data-agent-url]');
+
+        if (!select) {
+            return;
+        }
+
+        const previous = select.dataset.previous ?? '';
+
+        select.disabled = true;
+
+        try {
+            const data = await http.post(select.dataset.agentUrl, { agent: select.value || null });
+
+            select.dataset.previous = select.value;
+            notify.success(data.message);
+
+            // La ligne peut sortir du tableau si un filtre d'agent est actif :
+            // recharger évite d'afficher une ligne qui ne correspond plus.
+            if (form.querySelector('[name="agent"]')?.value) {
+                load({ resetPage: false });
+            }
+        } catch (error) {
+            select.value = previous;
+            notify.error(error.message);
+        } finally {
+            select.disabled = false;
+        }
+    });
+
     // Mémorise la valeur affichée pour pouvoir revenir en arrière en cas d'échec.
     body?.addEventListener('focusin', (event) => {
-        const select = event.target.closest('[data-status-url]');
+        const select = event.target.closest('[data-status-url], [data-agent-url]');
 
         if (select) {
             select.dataset.previous = select.value;

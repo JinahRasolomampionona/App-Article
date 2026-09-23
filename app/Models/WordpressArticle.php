@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\Stats\StatisticsRecorder;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -42,6 +43,8 @@ class WordpressArticle extends Model
         'wordpress_modified_at',
         'synced_at',
         'audit_status',
+        'agent',
+        'agent_assigned_at',
         'issues_count',
         'last_audited_at',
         'issues_resolved_at',
@@ -59,6 +62,7 @@ class WordpressArticle extends Model
             'wordpress_modified_at' => 'datetime',
             'synced_at' => 'datetime',
             'last_audited_at' => 'datetime',
+            'agent_assigned_at' => 'datetime',
             'issues_resolved_at' => 'datetime',
             'status_set_manually_at' => 'datetime',
         ];
@@ -159,7 +163,11 @@ class WordpressArticle extends Model
             return;
         }
 
+        $previousStatus = $this->audit_status;
+
         if ($status === self::AUDIT_FIXED) {
+            $resolved = $this->openIssues()->count();
+
             $this->openIssues()->update([
                 'resolved_at' => now(),
                 'resolved_manually' => true,
@@ -171,6 +179,17 @@ class WordpressArticle extends Model
                 'issues_resolved_at' => now(),
                 'status_set_manually_at' => now(),
             ])->save();
+
+            // L'article est déclaré corrigé : il entre dans l'historique des
+            // statistiques, en restant distingué d'une correction confirmée
+            // par un audit.
+            app(StatisticsRecorder::class)->record(
+                $this,
+                $previousStatus,
+                self::AUDIT_FIXED,
+                manual: true,
+                issuesResolved: $resolved,
+            );
 
             return;
         }
@@ -271,5 +290,25 @@ class WordpressArticle extends Model
             'categories',
             fn (Builder $q) => $q->whereIn('wordpress_categories.id', $categoryIds)
         );
+    }
+
+    /**
+     * Filtre par agent. La valeur spéciale `none` isole les articles encore
+     * non assignés, qui sont précisément ceux à répartir.
+     *
+     * @param  Builder<WordpressArticle>  $query
+     * @return Builder<WordpressArticle>
+     */
+    public function scopeForAgent(Builder $query, ?string $agent): Builder
+    {
+        if ($agent === null || $agent === '') {
+            return $query;
+        }
+
+        if ($agent === 'none') {
+            return $query->whereNull('agent');
+        }
+
+        return $query->where('agent', $agent);
     }
 }

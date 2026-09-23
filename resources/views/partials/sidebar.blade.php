@@ -1,4 +1,64 @@
-@php $needsFix = $navNeedsFix ?? 0; @endphp
+@php
+    $needsFix = $navNeedsFix ?? 0;
+
+    // Identifiants uniques : la sidebar est rendue deux fois (fixe et offcanvas),
+    // et `aria-controls` doit désigner un seul élément.
+    $scope = $navScope ?? 'main';
+
+    $sections = [
+        [
+            'key' => 'articleguard',
+            'label' => 'ArticleGuard',
+            'badge' => $needsFix,
+            'links' => [
+                [
+                    'href' => route('dashboard'),
+                    'icon' => 'bi-grid-1x2',
+                    'label' => 'Dashboard',
+                    'active' => request()->routeIs('dashboard'),
+                ],
+                [
+                    'href' => route('articles.index'),
+                    'icon' => 'bi-file-text',
+                    'label' => 'Articles',
+                    'active' => request()->routeIs('articles.*'),
+                    'badge' => $needsFix,
+                    'badgeTitle' => $needsFix.' article(s) à corriger',
+                ],
+                [
+                    'href' => route('audits.index'),
+                    'icon' => 'bi-clipboard-check',
+                    'label' => 'Audits',
+                    'active' => request()->routeIs('audits.*'),
+                ],
+                [
+                    'href' => route('sites.index'),
+                    'icon' => 'bi-globe2',
+                    'label' => 'Sites WordPress',
+                    'active' => request()->routeIs('sites.*'),
+                ],
+                [
+                    'href' => route('statistics.index'),
+                    'icon' => 'bi-bar-chart-line',
+                    'label' => 'Statistiques',
+                    'active' => request()->routeIs('statistics.*'),
+                ],
+            ],
+        ],
+        [
+            'key' => 'configuration',
+            'label' => 'Configuration',
+            'links' => [
+                [
+                    'href' => route('settings.edit'),
+                    'icon' => 'bi-sliders',
+                    'label' => 'Paramètres',
+                    'active' => request()->routeIs('settings.*'),
+                ],
+            ],
+        ],
+    ];
+@endphp
 
 <a href="{{ route('dashboard') }}" class="ag-brand">
     <span class="ag-brand__mark" aria-hidden="true"><i class="bi bi-shield-check"></i></span>
@@ -9,42 +69,38 @@
 </a>
 
 <nav class="ag-nav" aria-label="Navigation principale">
-    <p class="ag-nav__section">ArticleGuard</p>
+    @foreach($sections as $section)
+        @php $panelId = 'ag-nav-'.$section['key'].'-'.$scope; @endphp
 
-    <a href="{{ route('dashboard') }}"
-       class="ag-nav__link @if(request()->routeIs('dashboard')) is-active @endif"
-       @if(request()->routeIs('dashboard')) aria-current="page" @endif>
-        <i class="bi bi-grid-1x2" aria-hidden="true"></i> Dashboard
-    </a>
+        <div class="ag-nav__group" data-nav-group="{{ $section['key'] }}">
+            <button type="button" class="ag-nav__section" data-nav-toggle
+                    aria-expanded="true" aria-controls="{{ $panelId }}">
+                <i class="bi bi-chevron-down ag-nav__chevron" aria-hidden="true"></i>
+                <span>{{ $section['label'] }}</span>
+                @if(($section['badge'] ?? 0) > 0)
+                    <span class="ag-nav__badge ag-nav__badge--section"
+                          title="{{ $section['badge'] }} article(s) à corriger">{{ $section['badge'] }}</span>
+                @endif
+            </button>
 
-    <a href="{{ route('articles.index') }}"
-       class="ag-nav__link @if(request()->routeIs('articles.*')) is-active @endif"
-       @if(request()->routeIs('articles.*')) aria-current="page" @endif>
-        <i class="bi bi-file-text" aria-hidden="true"></i> Articles
-        @if($needsFix > 0)
-            <span class="ag-nav__badge" title="{{ $needsFix }} article(s) à corriger">{{ $needsFix }}</span>
-        @endif
-    </a>
-
-    <a href="{{ route('audits.index') }}"
-       class="ag-nav__link @if(request()->routeIs('audits.*')) is-active @endif"
-       @if(request()->routeIs('audits.*')) aria-current="page" @endif>
-        <i class="bi bi-clipboard-check" aria-hidden="true"></i> Audits
-    </a>
-
-    <a href="{{ route('sites.index') }}"
-       class="ag-nav__link @if(request()->routeIs('sites.*')) is-active @endif"
-       @if(request()->routeIs('sites.*')) aria-current="page" @endif>
-        <i class="bi bi-globe2" aria-hidden="true"></i> Sites WordPress
-    </a>
-
-    <p class="ag-nav__section">Configuration</p>
-
-    <a href="{{ route('settings.edit') }}"
-       class="ag-nav__link @if(request()->routeIs('settings.*')) is-active @endif"
-       @if(request()->routeIs('settings.*')) aria-current="page" @endif>
-        <i class="bi bi-sliders" aria-hidden="true"></i> Paramètres
-    </a>
+            <div class="ag-nav__items" id="{{ $panelId }}">
+                <div class="ag-nav__links">
+                @foreach($section['links'] as $link)
+                    <a href="{{ $link['href'] }}"
+                       class="ag-nav__link @if($link['active']) is-active @endif"
+                       data-label="{{ $link['label'] }}"
+                       @if($link['active']) aria-current="page" @endif>
+                        <i class="bi {{ $link['icon'] }}" aria-hidden="true"></i>
+                        <span class="ag-nav__label">{{ $link['label'] }}</span>
+                        @if(($link['badge'] ?? 0) > 0)
+                            <span class="ag-nav__badge" title="{{ $link['badgeTitle'] ?? '' }}">{{ $link['badge'] }}</span>
+                        @endif
+                    </a>
+                @endforeach
+                </div>
+            </div>
+        </div>
+    @endforeach
 </nav>
 
 <div class="ag-user">

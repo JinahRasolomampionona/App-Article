@@ -29,6 +29,7 @@
         </div>
     </div>
 @else
+
     {{-- Répartition par règle --}}
     <div class="d-flex flex-wrap gap-2 mb-3">
         <a href="{{ route('audits.index') }}"

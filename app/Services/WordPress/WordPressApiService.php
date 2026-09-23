@@ -520,6 +520,13 @@ class WordPressApiService
     */
 
     /**
+     * Champs d'un média : couvre le panneau « Détails du fichier joint » de
+     * WordPress (texte alternatif, titre, légende, description, URL) ainsi que
+     * les déclinaisons de taille proposées à l'insertion.
+     */
+    private const MEDIA_FIELDS = 'id,source_url,alt_text,mime_type,media_details,title,caption,description,slug,date';
+
+    /**
      * @return array<string, mixed>|null
      */
     public function fetchMedia(WordpressSite $site, int $mediaId): ?array
@@ -530,7 +537,7 @@ class WordPressApiService
 
         try {
             return $this->get($site, $this->endpoint($site, '/media/'.$mediaId), [
-                '_fields' => 'id,source_url,alt_text,mime_type,media_details,title',
+                '_fields' => self::MEDIA_FIELDS,
             ]);
         } catch (WordPressApiException $e) {
             if ($e->reason === 'not_found') {
@@ -584,8 +591,43 @@ class WordPressApiService
             'per_page' => $perPage,
             'orderby' => 'date',
             'order' => 'desc',
-            '_fields' => 'id,source_url,alt_text,mime_type,media_details,title',
+            '_fields' => self::MEDIA_FIELDS,
         ], fn ($value) => $value !== null));
+    }
+
+    /**
+     * Met à jour les métadonnées d'un média (texte alternatif, titre, légende,
+     * description). Ces champs appartiennent à la médiathèque : les modifier
+     * les change partout où le média est utilisé sur le site.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public function updateMedia(WordpressSite $site, int $mediaId, array $payload): array
+    {
+        if ($mediaId <= 0) {
+            throw WordPressApiException::notFound('Identifiant de média invalide.');
+        }
+
+        if ($payload === []) {
+            return $this->fetchMedia($site, $mediaId) ?? [];
+        }
+
+        if (! $site->hasCredentials()) {
+            throw WordPressApiException::unauthorized('Aucun identifiant WordPress enregistré pour ce site.');
+        }
+
+        $url = $this->endpoint($site, '/media/'.$mediaId);
+        $query = http_build_query(['_fields' => self::MEDIA_FIELDS]);
+
+        $response = $this->send(
+            $site,
+            fn (PendingRequest $request) => $request->post($url.'?'.$query, $payload),
+            $url,
+            write: true,
+        );
+
+        return $this->decode($response);
     }
 
     /**
