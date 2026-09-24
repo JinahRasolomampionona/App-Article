@@ -113,6 +113,9 @@ return [
         'analysis_resize' => 512,
         // Nombre maximum d'images du contenu analysées par article.
         'max_body_images' => 6,
+        // L'image à la une est affichée en bandeau (hero) par le thème : elle
+        // est exclue des analyses de flou et de cohérence, sauf si activé ici.
+        'analyze_featured_image' => (bool) env('AG_ANALYZE_FEATURED_IMAGE', false),
     ],
 
     /*

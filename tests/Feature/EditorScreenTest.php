@@ -38,6 +38,57 @@ class EditorScreenTest extends TestCase
             ->assertSee('Conserver les proportions', false);
     }
 
+    public function test_la_colonne_d_audit_detaille_chaque_probleme(): void
+    {
+        $user = User::factory()->create();
+        $site = WordpressSite::factory()->for($user)->create(['url' => 'https://example.com']);
+        $article = WordpressArticle::factory()->for($site, 'site')->create([
+            'content' => '<p>Texte</p><img src="https://example.com/uploads/bague-floue.jpg" alt="Bague">',
+            'issues_count' => 2,
+            'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,
+            'last_audited_at' => now(),
+        ]);
+
+        $article->issues()->create([
+            'rule_type' => 'image_blurry',
+            'severity' => 'warning',
+            'message' => 'Image potentiellement floue',
+            'metadata' => [
+                'target' => 'https://example.com/uploads/bague-floue.jpg',
+                'src' => 'https://example.com/uploads/bague-floue.jpg',
+                'sharpness' => 42.5,
+                'threshold' => 100,
+                'scope' => 'content',
+            ],
+            'detected_at' => now(),
+        ]);
+        $article->issues()->create([
+            'rule_type' => 'image_possibly_incoherent',
+            'severity' => 'info',
+            'message' => 'Image potentiellement incohérente',
+            'metadata' => [
+                'target' => 'https://example.com/uploads/voiture.jpg',
+                'src' => 'https://example.com/uploads/voiture.jpg',
+                'score' => 0.1,
+                'image_terms' => ['voiture', 'moteur'],
+                'matched_terms' => [],
+                'scope' => 'content',
+            ],
+            'detected_at' => now(),
+        ]);
+
+        $response = $this->actingAs($user)->get(route('articles.edit', $article));
+
+        $response->assertOk()
+            // Résumé : la nature des problèmes, pas seulement leur nombre.
+            ->assertSeeInOrder(['2 problèmes', 'Image potentiellement floue', 'Image potentiellement incohérente'], false)
+            // Détail : image en cause et valeurs mesurées.
+            ->assertSee('bague-floue.jpg', false)
+            ->assertSee('Netteté mesurée : 42,5 (seuil : 100)', false)
+            ->assertSee('Mots décrivant l’image : voiture, moteur', false)
+            ->assertSee('data-audit-src="https://example.com/uploads/bague-floue.jpg"', false);
+    }
+
     public function test_les_sections_de_la_sidebar_sont_repliables(): void
     {
         $user = User::factory()->create();

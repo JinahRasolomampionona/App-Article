@@ -90,9 +90,7 @@ class ImageAnalysisTest extends TestCase
 
         $article = new WordpressArticle([
             'title' => 'Bague',
-            'content' => '<p>Texte.</p>',
-            'featured_media_id' => 3,
-            'featured_media_url' => 'https://example.com/floue.png',
+            'content' => '<p>Texte.</p><img src="https://example.com/floue.png" alt="Bague">',
         ]);
 
         $issues = (new ImageBlurRule(new ImageQualityAnalyzer(new UrlGuard)))
@@ -101,6 +99,63 @@ class ImageAnalysisTest extends TestCase
         $this->assertNotEmpty($issues);
         $this->assertSame('image_blurry', $issues[0]->type);
         $this->assertSame('Image potentiellement floue', $issues[0]->message);
+        $this->assertSame('content', $issues[0]->metadata['scope']);
+    }
+
+    public function test_la_section_hero_est_exclue_de_l_analyse_de_flou(): void
+    {
+        Http::fake(['*' => Http::response($this->flatPng(), 200, ['Content-Type' => 'image/png'])]);
+
+        $article = new WordpressArticle([
+            'title' => 'Bague',
+            // Image à la une (bandeau hero du thème), une autre taille de cette
+            // même image dans le contenu, puis une image dans un bloc hero.
+            'content' => '<p>Texte.</p>'
+                .'<img src="https://example.com/uploads/bandeau-1024x768.png">'
+                .'<div class="page-hero"><img src="https://example.com/uploads/fond.png"></div>'
+                .'<div class="wp-block-cover"><img src="https://example.com/uploads/cover.png"></div>',
+            'featured_media_id' => 3,
+            'featured_media_url' => 'https://example.com/uploads/bandeau-scaled.png',
+        ]);
+
+        $issues = (new ImageBlurRule(new ImageQualityAnalyzer(new UrlGuard)))
+            ->evaluate(new AuditContext($article, AuditSettings::defaults(), allowNetwork: true));
+
+        $this->assertSame([], $issues);
+        Http::assertNothingSent();
+    }
+
+    public function test_l_image_a_la_une_peut_etre_reintegree_par_configuration(): void
+    {
+        config(['articleguard.images.analyze_featured_image' => true]);
+        Http::fake(['*' => Http::response($this->flatPng(), 200, ['Content-Type' => 'image/png'])]);
+
+        $article = new WordpressArticle([
+            'title' => 'Bague',
+            'content' => '<p>Texte.</p>',
+            'featured_media_id' => 3,
+            'featured_media_url' => 'https://example.com/floue.png',
+        ]);
+
+        $issues = (new ImageBlurRule(new ImageQualityAnalyzer(new UrlGuard)))
+            ->evaluate(new AuditContext($article, AuditSettings::defaults(), allowNetwork: true));
+
+        $this->assertSame('featured', $issues[0]->metadata['scope']);
+    }
+
+    public function test_l_image_a_la_une_n_est_pas_jugee_incoherente(): void
+    {
+        $article = new WordpressArticle([
+            'title' => 'Comment choisir une bague en diamant',
+            'content' => '<p>Choisir une bague en diamant demande de la méthode.</p>',
+            'featured_media_id' => 3,
+            'featured_media_url' => 'https://example.com/moteur-voiture-garage.jpg',
+        ]);
+
+        $issues = (new ImageRelevanceRule(new HeuristicImageRelevanceAnalyzer))
+            ->evaluate(new AuditContext($article, AuditSettings::defaults(), allowNetwork: true));
+
+        $this->assertSame([], $issues);
     }
 
     public function test_la_regle_de_flou_ne_telecharge_rien_sans_acces_reseau(): void
@@ -200,6 +255,27 @@ class ImageAnalysisTest extends TestCase
         $this->assertSame(RelevanceResult::RELEVANT, $result->verdict);
     }
 
+    public function test_une_image_qui_reprend_le_sujet_du_titre_est_coherente(): void
+    {
+        // Cas réel : un alt rédigé en phrase diluait les mots-clés, et les
+        // accents (« achète », « découvrez ») étaient mal découpés.
+        $result = (new HeuristicImageRelevanceAnalyzer)->analyze(
+            [
+                'url' => 'https://example.com/uploads/Qui-achete-les-alliances-1-1.jpg',
+                'alt' => "découvrez qui est généralement responsable de l'achat des alliances dans une relation, "
+                    .'les traditions et conseils pour choisir les bagues parfaites.',
+            ],
+            [
+                'title' => 'Qui achète les alliances ?',
+                'excerpt' => '',
+                'text' => 'Traditionnellement, les alliances sont achetées par le futur marié.',
+            ],
+        );
+
+        $this->assertSame(RelevanceResult::RELEVANT, $result->verdict);
+        $this->assertContains('decouvrez', $result->details['image_terms']);
+    }
+
     public function test_sans_fournisseur_aucune_remarque_de_pertinence_n_est_produite(): void
     {
         $article = new WordpressArticle([
@@ -227,6 +303,8 @@ class ImageAnalysisTest extends TestCase
 
         $this->assertNotEmpty($issues);
         $this->assertSame('Image potentiellement incohérente', $issues[0]->message);
+        // Les mots qui décrivent l'image sont conservés pour le détail de l'audit.
+        $this->assertContains('moteur', $issues[0]->metadata['image_terms']);
         // Le message ne doit jamais affirmer qu'une image est générée par IA.
         $this->assertStringNotContainsStringIgnoringCase('IA', $issues[0]->message);
     }

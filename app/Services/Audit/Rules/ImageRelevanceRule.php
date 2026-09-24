@@ -6,6 +6,7 @@ use App\Services\Audit\AuditContext;
 use App\Services\Audit\Issue;
 use App\Services\Audit\Relevance\ImageRelevanceAnalyzerInterface;
 use App\Services\Audit\Relevance\RelevanceResult;
+use App\Services\Audit\Rules\Concerns\SelectsContentImages;
 
 /**
  * Détection 4 — image potentiellement incohérente avec le sujet de l'article.
@@ -15,10 +16,13 @@ use App\Services\Audit\Relevance\RelevanceResult;
  *    déterminable de façon fiable à partir d'une URL ;
  *  - elle ne signale que lorsqu'un fournisseur est disponible et que le score
  *    passe sous le seuil configuré ;
- *  - un verdict `unknown` ne produit aucune remarque.
+ *  - un verdict `unknown` ne produit aucune remarque ;
+ *  - seules les images du contenu sont jugées, la section hero est écartée.
  */
 class ImageRelevanceRule implements AuditRule
 {
+    use SelectsContentImages;
+
     public function __construct(
         protected ImageRelevanceAnalyzerInterface $analyzer,
     ) {}
@@ -57,27 +61,7 @@ class ImageRelevanceRule implements AuditRule
         ];
 
         $issues = [];
-        $candidates = [];
-
-        if (filled($article->featured_media_url)) {
-            $candidates[] = [
-                'url' => (string) $article->featured_media_url,
-                'alt' => (string) $article->featured_media_alt,
-                'target' => 'featured_image',
-                'scope' => 'featured',
-            ];
-        }
-
-        foreach (array_slice($context->html()->images(), 0, (int) config('articleguard.images.max_body_images', 6)) as $image) {
-            $candidates[] = [
-                'url' => $image['src'],
-                'alt' => $image['alt'],
-                'title' => $image['title'],
-                'caption' => $image['caption'],
-                'target' => $image['src'],
-                'scope' => 'content',
-            ];
-        }
+        $candidates = array_map(fn (array $image) => $image + ['url' => $image['src']], $this->analyzableImages($context));
 
         foreach ($candidates as $candidate) {
             $result = $this->analyzer->analyze($candidate, $articlePayload);
@@ -96,9 +80,12 @@ class ImageRelevanceRule implements AuditRule
                 [
                     'target' => $candidate['target'],
                     'src' => $candidate['url'],
+                    'alt' => $candidate['alt'],
                     'scope' => $candidate['scope'],
                     'score' => $result->score,
                     'reason' => $result->reason,
+                    'image_terms' => $result->details['image_terms'] ?? [],
+                    'matched_terms' => $result->details['matched_terms'] ?? [],
                     'verdict' => RelevanceResult::POSSIBLY_INCOHERENT,
                 ]
             );

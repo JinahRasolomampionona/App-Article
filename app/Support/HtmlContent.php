@@ -42,7 +42,7 @@ class HtmlContent
      * l'image : on remonte donc toutes les balises `<img>`, quel que soit leur
      * parent.
      *
-     * @return array<int, array{src: string, alt: string, title: string, width: ?int, height: ?int, caption: string}>
+     * @return array<int, array{src: string, alt: string, title: string, width: ?int, height: ?int, caption: string, in_hero: bool}>
      */
     public function images(): array
     {
@@ -73,6 +73,7 @@ class HtmlContent
                 'width' => ctype_digit($node->getAttribute('width')) ? (int) $node->getAttribute('width') : null,
                 'height' => ctype_digit($node->getAttribute('height')) ? (int) $node->getAttribute('height') : null,
                 'caption' => $this->captionFor($node),
+                'in_hero' => $this->isInHero($node),
             ];
         }
 
@@ -318,6 +319,29 @@ class HtmlContent
         $html = preg_replace('/<img\b[^>]*'.$quoted.'[^>]*>/i', '', $html) ?? $html;
 
         return $html;
+    }
+
+    /**
+     * L'image appartient-elle à une section « hero » (bandeau d'en-tête) ?
+     *
+     * Reconnaît les classes `hero`, `*-hero`, `hero-*` et le bloc Gutenberg
+     * « Couverture » (`wp-block-cover`), utilisé comme bandeau.
+     */
+    protected function isInHero(DOMElement $node): bool
+    {
+        $parent = $node;
+
+        while ($parent instanceof DOMElement) {
+            $classes = ' '.strtolower($parent->getAttribute('class').' '.$parent->getAttribute('id')).' ';
+
+            if (preg_match('/[\s_-]hero[\s_-]|\swp-block-cover[\s_]/', $classes)) {
+                return true;
+            }
+
+            $parent = $parent->parentNode;
+        }
+
+        return false;
     }
 
     protected function captionFor(DOMElement $node): string

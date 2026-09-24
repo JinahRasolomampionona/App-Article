@@ -4,7 +4,7 @@ import { busy } from './busy.js';
 import { createMediaPicker } from './media-picker.js';
 import { createImageDetails } from './image-details.js';
 import { sanitizeHtml } from './sanitize-html.js';
-import { fileNameOf, safeUrl } from './url.js';
+import { fileNameOf, safeUrl, sameUrl } from './url.js';
 import { blockLabel, createBlockIndicator, createLinkPopover, createOutline, currentBlock } from './editor-structure.js';
 
 /**
@@ -312,7 +312,7 @@ export function initEditor() {
                 const settings = readImageSettings(img);
 
                 return `
-                <div class="ag-image-row" data-image-index="${index}">
+                <div class="ag-image-row" data-image-index="${index}" data-image-src="${escapeAttribute(settings.src)}">
                     <div class="ag-image-row__head">
                         <img src="${escapeAttribute(settings.src)}" alt="" loading="lazy">
                         <div class="ag-image-row__meta">
@@ -665,7 +665,15 @@ export function initEditor() {
         } else if (target === 'featured_image') {
             scrollAndFlash(featuredWrapper);
         } else if (target === 'images') {
-            scrollAndFlash(imagesList);
+            // Une remarque sur une image précise mène à cette image dans la
+            // liste « Images du contenu », à défaut à la liste entière.
+            const src = item.dataset.auditSrc;
+            const row = src
+                ? Array.from(imagesList?.querySelectorAll('[data-image-src]') ?? []).find((candidate) =>
+                      sameUrl(candidate.dataset.imageSrc, src),
+                  )
+                : null;
+            scrollAndFlash(row ?? imagesList);
         } else {
             setMode('visual');
             surface.scrollIntoView({ behavior: 'smooth', block: 'center' });

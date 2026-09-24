@@ -56,7 +56,7 @@ class HeuristicImageRelevanceAnalyzer implements ImageRelevanceAnalyzerInterface
             $article['title'] ?? '',
             $article['excerpt'] ?? '',
             $image['surrounding_text'] ?? '',
-            mb_substr((string) ($article['text'] ?? ''), 0, 1500),
+            mb_substr((string) ($article['text'] ?? ''), 0, 5000),
         ]));
 
         if (count($articleTokens) === 0) {
@@ -64,7 +64,18 @@ class HeuristicImageRelevanceAnalyzer implements ImageRelevanceAnalyzerInterface
         }
 
         $matches = array_values(array_intersect($imageTokens, $articleTokens));
-        $score = count($matches) / max(1, count($imageTokens));
+
+        // Deux mesures, la plus favorable l'emporte :
+        //  - part du vocabulaire de l'image retrouvée dans l'article ; un alt
+        //    rédigé en phrase (« découvrez… », « conseils… ») la dilue ;
+        //  - part des mots du titre de l'article présents dans l'image : une
+        //    image qui reprend le sujet même de l'article est cohérente.
+        $titleTokens = $this->tokenize((string) ($article['title'] ?? ''));
+        $titleCoverage = $titleTokens === []
+            ? 0.0
+            : count(array_intersect($titleTokens, $imageTokens)) / count($titleTokens);
+
+        $score = max(count($matches) / max(1, count($imageTokens)), $titleCoverage);
 
         $threshold = (float) config('articleguard.thresholds.relevance', 0.35);
 
@@ -145,10 +156,30 @@ class HeuristicImageRelevanceAnalyzer implements ImageRelevanceAnalyzerInterface
         return preg_replace('/(\d+)/', ' $1 ', $name) ?? $name;
     }
 
+    /**
+     * « achète » → « achete ». `iconv(…//TRANSLIT)` n'est pas fiable : sous
+     * Windows il remplace les lettres accentuées par « ? », ce qui coupait
+     * « découvrez » en « d » + « couvrez ».
+     */
     protected function stripAccents(string $value): string
     {
-        $transliterated = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
+        if (class_exists(\Normalizer::class)) {
+            $decomposed = \Normalizer::normalize($value, \Normalizer::FORM_D);
 
-        return is_string($transliterated) ? $transliterated : $value;
+            if (is_string($decomposed)) {
+                $value = preg_replace('/\p{Mn}+/u', '', $decomposed) ?? $value;
+            }
+        }
+
+        // Ligatures, lettres que la décomposition ne ramène pas à l'ASCII, et
+        // repli sans l'extension intl (le texte est déjà en minuscules).
+        return strtr($value, [
+            'œ' => 'oe', 'æ' => 'ae', 'ß' => 'ss', 'ø' => 'o', 'đ' => 'd', 'ł' => 'l',
+            'à' => 'a', 'â' => 'a', 'ä' => 'a', 'á' => 'a', 'ã' => 'a', 'å' => 'a',
+            'ç' => 'c', 'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e',
+            'î' => 'i', 'ï' => 'i', 'í' => 'i', 'ì' => 'i',
+            'ô' => 'o', 'ö' => 'o', 'ó' => 'o', 'ò' => 'o', 'õ' => 'o',
+            'ù' => 'u', 'û' => 'u', 'ü' => 'u', 'ú' => 'u', 'ÿ' => 'y', 'ý' => 'y', 'ñ' => 'n',
+        ]);
     }
 }

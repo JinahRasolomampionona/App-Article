@@ -6,6 +6,7 @@ use App\Models\ImageAnalysis;
 use App\Services\Audit\AuditContext;
 use App\Services\Audit\ImageQualityAnalyzer;
 use App\Services\Audit\Issue;
+use App\Services\Audit\Rules\Concerns\SelectsContentImages;
 
 /**
  * Détection 3 — images potentiellement floues ou de trop faible résolution.
@@ -13,9 +14,14 @@ use App\Services\Audit\Issue;
  * Règle coûteuse (téléchargement des images) : elle n'est exécutée que dans un
  * job en file d'attente, et s'appuie sur le cache d'analyses pour ne jamais
  * télécharger deux fois la même URL.
+ *
+ * Seules les images du contenu sont analysées : la section hero (image à la
+ * une affichée en bandeau par le thème) est écartée.
  */
 class ImageBlurRule implements AuditRule
 {
+    use SelectsContentImages;
+
     public function __construct(
         protected ImageQualityAnalyzer $analyzer,
     ) {}
@@ -43,12 +49,11 @@ class ImageBlurRule implements AuditRule
     public function evaluate(AuditContext $context): array
     {
         $issues = [];
-        $maxImages = (int) config('articleguard.images.max_body_images', 6);
         $minWidth = (int) $context->settings->threshold('min_image_width', 600);
         $minHeight = (int) $context->settings->threshold('min_image_height', 400);
         $blurThreshold = (float) $context->settings->threshold('blur', 100);
 
-        foreach ($this->targets($context, $maxImages) as $target) {
+        foreach ($this->analyzableImages($context) as $target) {
             $analysis = $context->allowNetwork
                 ? $this->analyzer->analyze($target['src'])
                 : $this->analyzer->cached($target['src']);
@@ -64,8 +69,11 @@ class ImageBlurRule implements AuditRule
                     [
                         'target' => $target['target'],
                         'src' => $target['src'],
+                        'alt' => $target['alt'],
                         'sharpness' => $analysis->sharpness,
                         'threshold' => $blurThreshold,
+                        'width' => $analysis->width,
+                        'height' => $analysis->height,
                         'scope' => $target['scope'],
                     ]
                 );
@@ -81,6 +89,7 @@ class ImageBlurRule implements AuditRule
                     [
                         'target' => $target['target'],
                         'src' => $target['src'],
+                        'alt' => $target['alt'],
                         'width' => $analysis->width,
                         'height' => $analysis->height,
                         'min_width' => $minWidth,
@@ -92,33 +101,5 @@ class ImageBlurRule implements AuditRule
         }
 
         return $issues;
-    }
-
-    /**
-     * Image à la une puis images du contenu, dédoublonnées par URL.
-     *
-     * @return array<int, array{src: string, target: string, scope: string}>
-     */
-    protected function targets(AuditContext $context, int $maxBodyImages): array
-    {
-        $targets = [];
-        $seen = [];
-
-        if (filled($context->article->featured_media_url)) {
-            $src = (string) $context->article->featured_media_url;
-            $seen[$src] = true;
-            $targets[] = ['src' => $src, 'target' => 'featured_image', 'scope' => 'featured'];
-        }
-
-        foreach (array_slice($context->html()->images(), 0, $maxBodyImages) as $image) {
-            if (isset($seen[$image['src']])) {
-                continue;
-            }
-
-            $seen[$image['src']] = true;
-            $targets[] = ['src' => $image['src'], 'target' => $image['src'], 'scope' => 'content'];
-        }
-
-        return $targets;
     }
 }
