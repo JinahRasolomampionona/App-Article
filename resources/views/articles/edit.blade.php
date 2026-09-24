@@ -86,6 +86,21 @@
                 <div class="ag-card__body">
                     <div id="ag-editor" class="ag-editor">
                         <div class="ag-editor__toolbar" role="toolbar" aria-label="Mise en forme">
+                            {{-- Type du bloc courant, comme le sélecteur de bloc de WordPress. --}}
+                            <select class="form-select form-select-sm ag-editor__block-select" data-editor-block
+                                    aria-label="Type de bloc" title="Type du bloc sélectionné">
+                                <option value="p">Paragraphe</option>
+                                <option value="h1">Titre 1 (H1)</option>
+                                <option value="h2">Titre 2 (H2)</option>
+                                <option value="h3">Titre 3 (H3)</option>
+                                <option value="h4">Titre 4 (H4)</option>
+                                <option value="h5">Titre 5 (H5)</option>
+                                <option value="h6">Titre 6 (H6)</option>
+                                <option value="blockquote">Citation</option>
+                                <option value="pre">Préformaté</option>
+                                <option value="" disabled hidden data-editor-block-other>Autre</option>
+                            </select>
+                            <span class="vr mx-1"></span>
                             <button type="button" class="ag-editor__tool" data-command="bold"
                                     title="Gras" aria-label="Gras"><i class="bi bi-type-bold" aria-hidden="true"></i></button>
                             <button type="button" class="ag-editor__tool" data-command="italic"
@@ -110,6 +125,20 @@
                             <span class="vr mx-1"></span>
                             <button type="button" class="ag-editor__tool" data-command="removeFormat"
                                     title="Effacer la mise en forme" aria-label="Effacer la mise en forme"><i class="bi bi-eraser" aria-hidden="true"></i></button>
+                        </div>
+
+                        {{-- Structure des titres : nombre de H1…H6 et plan cliquable. --}}
+                        <div class="ag-outline" data-editor-outline>
+                            <div class="ag-outline__bar">
+                                <span class="ag-outline__label">Titres</span>
+                                <div class="ag-outline__counts" data-outline-counts></div>
+                                <button type="button" class="ag-outline__toggle" data-outline-toggle
+                                        aria-expanded="false" aria-controls="ag-outline-list">
+                                    Plan (<span data-outline-total>0</span>)
+                                    <i class="bi bi-chevron-down" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                            <ol class="ag-outline__list" id="ag-outline-list" data-outline-list hidden></ol>
                         </div>
 
                         {{-- La surface visuelle est remplie par le JavaScript à partir du

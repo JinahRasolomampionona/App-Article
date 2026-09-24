@@ -5,6 +5,7 @@ import { createMediaPicker } from './media-picker.js';
 import { createImageDetails } from './image-details.js';
 import { sanitizeHtml } from './sanitize-html.js';
 import { fileNameOf, safeUrl } from './url.js';
+import { blockLabel, createBlockIndicator, createLinkPopover, createOutline, currentBlock } from './editor-structure.js';
 
 /**
  * Éditeur d'article.
@@ -57,12 +58,23 @@ export function initEditor() {
     function renderVisual() {
         surface.innerHTML = sanitizeHtml(source.value);
         visualDirty = false;
+        // Les repères pointaient vers des éléments qui viennent d'être remplacés.
+        linkPopover.hide();
+        blockIndicator.hide();
     }
 
     function applyHtml(html) {
         source.value = html;
         renderVisual();
         refreshImagesList();
+        scheduleStructure();
+    }
+
+    /** Une modification faite dans l'onglet visuel devient la référence. */
+    function syncFromSurface() {
+        visualDirty = true;
+        source.value = surface.innerHTML;
+        scheduleStructure();
     }
 
     /* --- Onglets ----------------------------------------------------------- */
@@ -77,6 +89,9 @@ export function initEditor() {
         }
 
         mode = next;
+        closePopover();
+        linkPopover.hide();
+        blockIndicator.hide();
 
         tabs.forEach((tab) => {
             tab.classList.toggle('is-active', tab.dataset.editorTab === next);
@@ -87,6 +102,7 @@ export function initEditor() {
         source.hidden = next !== 'source';
         (next === 'visual' ? surface : source).focus();
         refreshImagesList();
+        scheduleStructure();
     }
 
     tabs.forEach((tab) => {
@@ -95,9 +111,73 @@ export function initEditor() {
 
     /* --- Barre d'outils ---------------------------------------------------- */
 
-    root.querySelectorAll('[data-command]').forEach((button) => {
+    const commandButtons = root.querySelectorAll('[data-command]');
+    const blockSelect = root.querySelector('[data-editor-block]');
+    const blockOther = blockSelect?.querySelector('[data-editor-block-other]');
+
+    // Dernière sélection dans la zone éditable : un clic dans la barre
+    // d'outils (ou sur le sélecteur de bloc) peut la faire perdre.
+    let savedRange = null;
+
+    function restoreSelection() {
+        surface.focus();
+
+        if (savedRange && surface.contains(savedRange.startContainer)) {
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(savedRange);
+        }
+    }
+
+    /** Boutons actifs et type de bloc, d'après la position du curseur. */
+    function refreshToolbarState() {
+        if (mode !== 'visual') return;
+
+        const selection = window.getSelection();
+        const inSurface = Boolean(selection?.rangeCount) && surface.contains(selection.anchorNode);
+        const tag = inSurface ? (currentBlock(surface)?.tagName.toLowerCase() ?? null) : null;
+
+        commandButtons.forEach((button) => {
+            const { command, value } = button.dataset;
+            let active = null;
+
+            if (command === 'formatBlock') {
+                active = tag === value;
+            } else if (['bold', 'italic', 'insertUnorderedList', 'insertOrderedList'].includes(command)) {
+                active = inSurface && document.queryCommandState(command);
+            }
+
+            if (active !== null) {
+                button.classList.toggle('is-active', active);
+                button.setAttribute('aria-pressed', String(active));
+            }
+        });
+
+        if (!blockSelect || !inSurface) return;
+
+        if (tag && blockSelect.querySelector(`option[value="${tag}"]`)) {
+            blockSelect.value = tag;
+        } else if (tag && blockOther) {
+            blockOther.textContent = blockLabel(tag);
+            blockSelect.value = '';
+        } else {
+            blockSelect.value = 'p';
+        }
+    }
+
+    blockSelect?.addEventListener('change', () => {
+        if (!blockSelect.value) return;
+
+        restoreSelection();
+        document.execCommand('formatBlock', false, blockSelect.value);
+        syncFromSurface();
+        refreshToolbarState();
+        blockIndicator.update();
+    });
+
+    commandButtons.forEach((button) => {
         button.addEventListener('click', () => {
-            surface.focus();
+            restoreSelection();
 
             const { command, value } = button.dataset;
 
@@ -109,8 +189,9 @@ export function initEditor() {
                 document.execCommand(command, false, value ?? null);
             }
 
-            visualDirty = true;
-            source.value = surface.innerHTML;
+            syncFromSurface();
+            refreshToolbarState();
+            blockIndicator.update();
         });
     });
 
@@ -118,7 +199,7 @@ export function initEditor() {
         const media = await picker.open();
         if (!media) return;
 
-        surface.focus();
+        restoreSelection();
         document.execCommand(
             'insertHTML',
             false,
@@ -127,8 +208,7 @@ export function initEditor() {
             )}" /></figure>`,
         );
 
-        visualDirty = true;
-        source.value = surface.innerHTML;
+        syncFromSurface();
         refreshImagesList();
     });
 
@@ -371,23 +451,63 @@ export function initEditor() {
     const popover = createImagePopover(root);
     let selectedIndex = null;
 
+    // Même principe pour les liens : un clic sur un lien affiche son adresse,
+    // cliquable, avec de quoi le modifier ou le retirer.
+    const linkPopover = createLinkPopover(root, {
+        onChange: () => {
+            syncFromSurface();
+            notify.info('Lien modifié. Cliquez sur « Mettre à jour » pour l’envoyer à WordPress.');
+        },
+        onError: (message) => notify.error(message),
+    });
+
+    // Repère « H2 · Titre », « Paragraphe »… au-dessus du bloc courant.
+    const blockIndicator = createBlockIndicator(root, surface);
+
     surface.addEventListener('click', (event) => {
         const img = event.target.closest('img');
 
         if (img && surface.contains(img)) {
             event.preventDefault();
+            linkPopover.hide();
             openPopover(img);
             return;
         }
 
-        // Ctrl/Cmd + clic : ouvre un lien du contenu dans un nouvel onglet.
         const anchor = event.target.closest('a[href]');
-        if (anchor && (event.ctrlKey || event.metaKey) && safeUrl(anchor.getAttribute('href'))) {
-            window.open(anchor.getAttribute('href'), '_blank', 'noopener');
+
+        if (anchor && surface.contains(anchor)) {
+            // Ctrl/Cmd + clic : ouvre directement le lien dans un nouvel onglet.
+            if ((event.ctrlKey || event.metaKey) && safeUrl(anchor.getAttribute('href'))) {
+                window.open(anchor.getAttribute('href'), '_blank', 'noopener');
+                return;
+            }
+
+            closePopover();
+            linkPopover.show(anchor);
             return;
         }
 
         closePopover();
+        linkPopover.hide();
+    });
+
+    // Saisir du texte referme le panneau du lien, comme dans WordPress.
+    surface.addEventListener('keydown', (event) => {
+        if (!['Shift', 'Control', 'Meta', 'Alt'].includes(event.key)) {
+            linkPopover.hide();
+        }
+    });
+
+    document.addEventListener('selectionchange', () => {
+        const selection = window.getSelection();
+
+        if (selection?.rangeCount && surface.contains(selection.anchorNode)) {
+            savedRange = selection.getRangeAt(0).cloneRange();
+        }
+
+        refreshToolbarState();
+        blockIndicator.update();
     });
 
     function openPopover(img) {
@@ -460,13 +580,57 @@ export function initEditor() {
         }
     });
 
-    surface.addEventListener('scroll', closePopover);
-    window.addEventListener('resize', closePopover);
+    surface.addEventListener('scroll', () => {
+        closePopover();
+        linkPopover.hide();
+        blockIndicator.update();
+    });
+    window.addEventListener('resize', () => {
+        closePopover();
+        linkPopover.hide();
+        blockIndicator.update();
+    });
     document.addEventListener('mousedown', (event) => {
-        if (!popover.element.hidden && !popover.element.contains(event.target) && !surface.contains(event.target)) {
+        if (surface.contains(event.target)) return;
+
+        if (!popover.element.hidden && !popover.element.contains(event.target)) {
             closePopover();
         }
+
+        if (!linkPopover.element.hidden && !linkPopover.element.contains(event.target)) {
+            linkPopover.hide();
+        }
     });
+
+    /* --- Plan des titres (H1 : 1, H2 : 4…) ------------------------------------ */
+
+    const outlineContainer = root.querySelector('[data-editor-outline]');
+    const outline = outlineContainer ? createOutline(outlineContainer, { onSelect: goToHeading }) : null;
+    let structureTimer = null;
+
+    function scheduleStructure() {
+        clearTimeout(structureTimer);
+        structureTimer = setTimeout(() => outline?.update(currentHtml()), 150);
+    }
+
+    /** Amène le curseur au début du n-ième titre, dans l'onglet visuel. */
+    function goToHeading(index) {
+        setMode('visual');
+
+        const heading = surface.querySelectorAll('h1,h2,h3,h4,h5,h6')[index];
+        if (!heading) return;
+
+        heading.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        const range = document.createRange();
+        range.selectNodeContents(heading);
+        range.collapse(true);
+        surface.focus({ preventScroll: true });
+
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }
 
     /**
      * Position de l'image cliquée dans le HTML de référence. La surface est
@@ -590,18 +754,20 @@ export function initEditor() {
     /* --- Synchronisation des deux onglets ------------------------------------ */
 
     surface.addEventListener('input', () => {
-        visualDirty = true;
-        source.value = surface.innerHTML;
+        syncFromSurface();
+        blockIndicator.update();
     });
 
     source.addEventListener('input', () => {
         renderVisual();
+        scheduleStructure();
     });
 
     /* --- Initialisation ------------------------------------------------------ */
 
     renderVisual();
     refreshImagesList();
+    outline?.update(currentHtml());
 }
 
 function scrollAndFlash(element) {
