@@ -73,20 +73,21 @@
         @endif
     </td>
 
-    {{-- Statut : sélecteur dès qu'un problème a été détecté, badge sinon.
-         « OK » et l'absence d'audit ne se décrètent pas à la main. --}}
+    {{-- Statut : sélecteur À corriger / Corrigé dès qu'un problème a été
+         détecté. Il reste visible mais désactivé quand un autre agent traite
+         l'article. « OK » et l'absence d'audit ne se décrètent pas à la main. --}}
     <td>
-        @if($article->statusIsEditable() && auth()->user()->can('update', $article))
+        @if($article->statusIsEditable())
+            @php $canSetStatus = auth()->user()->can('setStatus', $article); @endphp
             <select class="form-select form-select-sm ag-status-select ag-status-select--{{ $article->statusVariant() }}"
                     data-status-url="{{ route('articles.status', $article) }}"
-                    aria-label="Statut de l’article {{ $article->title }}">
+                    aria-label="Statut de l’article {{ $article->title }}"
+                    @disabled(! $canSetStatus)
+                    @unless($canSetStatus) title="En cours par {{ $article->activeAgentName() }}" @endunless>
                 @foreach(\App\Models\WordpressArticle::manualStatuses() as $value => $label)
                     <option value="{{ $value }}" @selected($article->audit_status === $value)>{{ $label }}</option>
                 @endforeach
             </select>
-            @if($article->status_set_manually_at)
-                <span class="ag-hint">Défini manuellement</span>
-            @endif
         @elseif($article->statusLabel())
             <span class="ag-badge ag-badge--{{ $article->statusVariant() }}">
                 {{ $article->statusLabel() }}

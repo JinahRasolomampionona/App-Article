@@ -251,8 +251,12 @@ class WordpressArticle extends Model
      *
      * Le prochain audit reste souverain : si le défaut est toujours là, il
      * rouvrira la remarque et le statut repassera à « À corriger ».
+     *
+     * Les statistiques suivent : « Corrigé » crédite `$by` (le compte qui le
+     * déclare) d'une correction ; revenir à « À corriger » retire cette
+     * correction déclarée à la main.
      */
-    public function applyManualStatus(string $status): void
+    public function applyManualStatus(string $status, ?User $by = null): void
     {
         if (! array_key_exists($status, self::manualStatuses())) {
             return;
@@ -284,6 +288,7 @@ class WordpressArticle extends Model
                 self::AUDIT_FIXED,
                 manual: true,
                 issuesResolved: $resolved,
+                agent: $by,
             );
 
             return;
@@ -299,6 +304,10 @@ class WordpressArticle extends Model
             'issues_count' => $this->openIssues()->count(),
             'status_set_manually_at' => now(),
         ])->save();
+
+        if ($previousStatus === self::AUDIT_FIXED) {
+            app(StatisticsRecorder::class)->retractManualCorrection($this);
+        }
     }
 
     public function statusLabel(): ?string

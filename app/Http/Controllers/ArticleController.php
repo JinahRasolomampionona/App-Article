@@ -212,7 +212,7 @@ class ArticleController extends Controller
      */
     public function updateStatus(Request $request, WordpressArticle $article): JsonResponse
     {
-        $this->authorize('update', $article);
+        $this->authorize('setStatus', $article);
 
         $validated = $request->validate([
             'status' => ['required', Rule::in(array_keys(WordpressArticle::manualStatuses()))],
@@ -227,7 +227,9 @@ class ArticleController extends Controller
             ], 422);
         }
 
-        $article->applyManualStatus($validated['status']);
+        // La correction déclarée est créditée, dans les statistiques, au
+        // compte qui la déclare.
+        $article->applyManualStatus($validated['status'], $request->user());
         $article->refresh();
 
         return response()->json([

@@ -39,6 +39,22 @@ class WordpressArticlePolicy
         return Response::denyWithStatus(409, 'Prenez d’abord cet article en charge pour pouvoir le modifier.');
     }
 
+    /**
+     * Statut posé à la main (À corriger / Corrigé) depuis le tableau : permis
+     * sur tout article de ses sites, sauf s'il est en cours chez un autre
+     * agent — c'est alors à lui de le déclarer.
+     */
+    public function setStatus(User $user, WordpressArticle $article): Response
+    {
+        if (! $this->canAccessSite($user, $article)) {
+            return Response::deny('Ce site ne fait pas partie de vos sites connectés.');
+        }
+
+        return $article->isLockedByOther($user)
+            ? Response::denyWithStatus(409, 'Cet article est actuellement traité par '.$article->activeAgentName().'.')
+            : Response::allow();
+    }
+
     /** Relancer l'audit ne modifie pas le contenu. */
     public function audit(User $user, WordpressArticle $article): bool
     {

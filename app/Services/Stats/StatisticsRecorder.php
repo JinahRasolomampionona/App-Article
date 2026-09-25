@@ -37,6 +37,7 @@ class StatisticsRecorder
         string $status,
         bool $manual = false,
         int $issuesResolved = 0,
+        ?User $agent = null,
     ): ?ArticleStatusHistory {
         if (! in_array($status, self::RECORDED, true) || $status === $previousStatus) {
             return null;
@@ -53,9 +54,10 @@ class StatisticsRecorder
             return null;
         }
 
-        // Agent au moment de la correction : l'historique doit rester juste
-        // même si l'article est repris ensuite par quelqu'un d'autre.
-        $agent = $this->locks->responsibleAgent($article);
+        // Agent au moment de la correction : celui qui la déclare, sinon celui
+        // qui traite l'article. L'historique reste juste même si l'article est
+        // repris ensuite par quelqu'un d'autre.
+        $agent ??= $this->locks->responsibleAgent($article);
 
         return ArticleStatusHistory::create([
             'user_id' => $site->user_id,
@@ -73,6 +75,26 @@ class StatisticsRecorder
             'issues_resolved' => $issuesResolved,
             'recorded_at' => now(),
         ]);
+    }
+
+    /**
+     * Annule la dernière correction déclarée à la main d'un article qui repasse
+     * « À corriger » : une déclaration retirée ne doit plus compter dans les
+     * statistiques. Une correction confirmée par un audit n'est jamais retirée.
+     */
+    public function retractManualCorrection(WordpressArticle $article): bool
+    {
+        $last = ArticleStatusHistory::query()
+            ->where('wordpress_article_id', $article->id)
+            ->orderByDesc('recorded_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($last === null || ! $last->resolved_manually || $last->status !== WordpressArticle::AUDIT_FIXED) {
+            return false;
+        }
+
+        return (bool) $last->delete();
     }
 
     /**

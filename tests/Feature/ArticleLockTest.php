@@ -280,6 +280,62 @@ class ArticleLockTest extends TestCase
         Http::assertNothingSent();
     }
 
+    /* --- Statut manuel ----------------------------------------------------------- */
+
+    public function test_le_statut_est_un_selecteur_desactive_si_un_autre_agent_traite_l_article(): void
+    {
+        $free = $this->article(['title' => 'Libre', 'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX]);
+        $taken = $this->lockFor($this->article(['title' => 'Pris', 'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX]), $this->daniella);
+
+        $html = $this->actingAs($this->jinah)
+            ->getJson(route('articles.index', ['site' => $this->site->id, 'partial' => 1]))
+            ->json('html');
+
+        $rows = collect(explode('<tr data-article-id=', $html))->slice(1)->keyBy(fn ($row) => (int) trim(strtok($row, '>'), '"'));
+
+        $this->assertStringContainsString('ag-status-select', $rows[$free->id]);
+        $this->assertStringNotContainsString('disabled', explode('</select>', explode('ag-status-select', $rows[$free->id])[1])[0]);
+        $this->assertStringContainsString('ag-status-select', $rows[$taken->id]);
+        $this->assertStringContainsString('title="En cours par Daniella"', $rows[$taken->id]);
+    }
+
+    public function test_declarer_corrige_credite_l_agent_et_revenir_retire_la_correction(): void
+    {
+        $article = $this->article(['audit_status' => WordpressArticle::AUDIT_NEEDS_FIX, 'issues_count' => 1]);
+
+        // Article non pris : Jinah peut déclarer son statut directement.
+        $this->actingAs($this->jinah)
+            ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
+            ->assertOk();
+
+        $entry = ArticleStatusHistory::firstOrFail();
+        $this->assertSame($this->jinah->id, $entry->agent_user_id);
+        $this->assertTrue($entry->resolved_manually);
+
+        $this->actingAs($this->jinah)
+            ->get(route('statistics.index'))
+            ->assertOk()
+            ->assertViewHas('me', fn ($me) => $me['corrected'] === 1);
+
+        $this->actingAs($this->jinah)
+            ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_NEEDS_FIX])
+            ->assertOk();
+
+        $this->assertSame(0, ArticleStatusHistory::count());
+    }
+
+    public function test_un_agent_ne_change_pas_le_statut_d_un_article_pris_par_un_autre(): void
+    {
+        $article = $this->lockFor($this->article(['audit_status' => WordpressArticle::AUDIT_NEEDS_FIX]), $this->daniella);
+
+        $this->actingAs($this->jinah)
+            ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
+            ->assertStatus(409)
+            ->assertJsonPath('message', 'Cet article est actuellement traité par Daniella.');
+
+        $this->assertSame(WordpressArticle::AUDIT_NEEDS_FIX, $article->fresh()->audit_status);
+    }
+
     /* --- Heartbeat ------------------------------------------------------------ */
 
     public function test_le_heartbeat_prolonge_le_verrou(): void

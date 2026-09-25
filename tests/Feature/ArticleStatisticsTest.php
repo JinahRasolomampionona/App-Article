@@ -129,17 +129,44 @@ class ArticleStatisticsTest extends TestCase
         $this->assertSame(1, ArticleStatusHistory::count());
     }
 
-    public function test_un_retour_a_corriger_puis_une_nouvelle_correction_creent_deux_entrees(): void
+    /**
+     * Repasser « À corriger » retire la correction déclarée : seule la
+     * dernière déclaration compte.
+     */
+    public function test_un_retour_a_corriger_retire_la_correction_declaree(): void
     {
         $article = WordpressArticle::factory()->for($this->site, 'site')->create([
             'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,
         ]);
 
         $article->applyManualStatus(WordpressArticle::AUDIT_FIXED);
-        $article->refresh()->applyManualStatus(WordpressArticle::AUDIT_NEEDS_FIX);
-        $article->refresh()->applyManualStatus(WordpressArticle::AUDIT_FIXED);
+        $this->assertSame(1, ArticleStatusHistory::count());
 
-        $this->assertSame(2, ArticleStatusHistory::count());
+        $article->refresh()->applyManualStatus(WordpressArticle::AUDIT_NEEDS_FIX);
+        $this->assertSame(0, ArticleStatusHistory::count());
+
+        $article->refresh()->applyManualStatus(WordpressArticle::AUDIT_FIXED);
+        $this->assertSame(1, ArticleStatusHistory::count());
+    }
+
+    public function test_un_retour_a_corriger_ne_retire_pas_une_correction_confirmee_par_audit(): void
+    {
+        $article = WordpressArticle::factory()->for($this->site, 'site')->create([
+            'audit_status' => WordpressArticle::AUDIT_FIXED,
+        ]);
+        ArticleStatusHistory::create([
+            'user_id' => $this->user->id,
+            'wordpress_site_id' => $this->site->id,
+            'wordpress_article_id' => $article->id,
+            'site_name' => $this->site->name,
+            'status' => WordpressArticle::AUDIT_FIXED,
+            'resolved_manually' => false,
+            'recorded_at' => now(),
+        ]);
+
+        $article->applyManualStatus(WordpressArticle::AUDIT_NEEDS_FIX);
+
+        $this->assertSame(1, ArticleStatusHistory::count());
     }
 
     /* --- Survie à la suppression du site -------------------------------------- */
