@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreSiteRequest;
 use App\Http\Requests\UpdateSiteRequest;
 use App\Jobs\SynchronizeSiteJob;
+use App\Models\SiteConnection;
 use App\Models\WordpressSite;
 use App\Services\QueueHealth;
 use App\Services\QueueWorkerLauncher;
@@ -13,8 +14,17 @@ use App\Services\WordPress\SiteConnectionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\View\View;
 
+/**
+ * Sites WordPress.
+ *
+ * Chaque compte — Admin ou Agent — connecte ses propres sites avec ses
+ * propres identifiants et gère sa connexion (tester, synchroniser, modifier,
+ * supprimer). Un même site connecté par plusieurs comptes partage ses
+ * articles : c'est ce qui permet à l'Admin de suivre le travail des agents.
+ */
 class SiteController extends Controller
 {
     public function __construct(
@@ -24,17 +34,33 @@ class SiteController extends Controller
         protected QueueWorkerLauncher $worker,
     ) {}
 
-    public function index(): View
+    public function index(Request $request): View
     {
         $this->authorize('viewAny', WordpressSite::class);
 
-        $sites = auth()->user()->sites()
+        $user = $request->user();
+
+        // Les sites de l'utilisateur : ceux qu'il a lui-même connectés.
+        $sites = WordpressSite::query()
+            ->whereHas('connections', fn ($query) => $query->where('user_id', $user->id))
+            ->with(['connections.user:id,name'])
             ->withCount(['articles', 'categories'])
             ->orderBy('name')
             ->get();
 
+        // L'Admin suit aussi les sites connectés uniquement par les agents.
+        $otherSites = $user->isAdmin()
+            ? WordpressSite::query()
+                ->whereDoesntHave('connections', fn ($query) => $query->where('user_id', $user->id))
+                ->with(['connections.user:id,name'])
+                ->withCount(['articles', 'categories'])
+                ->orderBy('name')
+                ->get()
+            : collect();
+
         return view('sites.index', [
             'sites' => $sites,
+            'otherSites' => $otherSites,
             // Sans worker, un « en cours » resterait affiché indéfiniment :
             // la vue doit pouvoir dire que rien n'avance.
             'queueStalled' => $this->queue->needsManualWorker(),
@@ -48,24 +74,46 @@ class SiteController extends Controller
         return view('sites.create');
     }
 
+    /**
+     * Connecte un site pour l'utilisateur.
+     *
+     * Si un autre compte l'a déjà connecté, le site existant est rejoint :
+     * l'utilisateur y ajoute sa propre connexion et travaille sur les mêmes
+     * articles, avec ses propres identifiants.
+     */
     public function store(StoreSiteRequest $request): RedirectResponse
     {
         $this->authorize('create', WordpressSite::class);
 
-        $site = new WordpressSite([
-            'name' => $request->validated('name'),
-            'url' => $request->normalizedUrl(),
-            'wp_username' => $request->validated('wp_username'),
-        ]);
+        $user = $request->user();
+        $existing = $request->existingSite();
 
-        if (filled($request->validated('application_password'))) {
-            $site->application_password = WordpressSite::normalizeApplicationPassword(
-                $request->validated('application_password')
-            );
-        }
+        $site = DB::transaction(function () use ($request, $user, $existing) {
+            if ($existing !== null) {
+                $site = $existing->useConnection(new SiteConnection([
+                    'wordpress_site_id' => $existing->id,
+                    'user_id' => $user->id,
+                ]));
+            } else {
+                $site = new WordpressSite([
+                    'name' => $request->validated('name'),
+                    'url' => $request->normalizedUrl(),
+                ]);
+                $site->user_id = $user->id;
+            }
 
-        $site->user_id = $request->user()->id;
-        $site->save();
+            $site->wp_username = $request->validated('wp_username');
+
+            if (filled($request->validated('application_password'))) {
+                $site->application_password = WordpressSite::normalizeApplicationPassword(
+                    $request->validated('application_password')
+                );
+            }
+
+            $site->save();
+
+            return $site;
+        });
 
         $this->context->refresh();
         $this->context->remember($site);
@@ -77,12 +125,14 @@ class SiteController extends Controller
             // doit refléter qu'un travail est en attente, worker ou non.
             $site->forceFill(['sync_status' => 'queued', 'sync_message' => null])->save();
 
-            SynchronizeSiteJob::dispatch($site);
+            SynchronizeSiteJob::dispatch($site, true, $user->id);
             $this->worker->ensureRunning();
 
             return redirect()
                 ->route('sites.index')
-                ->with('status', 'Site connecté. La synchronisation initiale est en cours.');
+                ->with('status', $existing
+                    ? 'Site connecté avec vos identifiants. Vous partagez ses articles avec les autres comptes qui l’ont connecté.'
+                    : 'Site connecté. La synchronisation initiale est en cours.');
         }
 
         return redirect()
@@ -90,20 +140,33 @@ class SiteController extends Controller
             ->with('error', $result['message']);
     }
 
-    public function edit(WordpressSite $site): View
+    public function edit(Request $request, WordpressSite $site): View
     {
         $this->authorize('update', $site);
 
-        return view('sites.edit', ['site' => $site]);
+        return view('sites.edit', [
+            'site' => $site,
+            'sharedWith' => $site->connections()
+                ->where('user_id', '!=', $request->user()->id)
+                ->with('user:id,name')
+                ->get(),
+        ]);
     }
 
     public function update(UpdateSiteRequest $request, WordpressSite $site): RedirectResponse
     {
-        $site->fill([
-            'name' => $request->validated('name'),
-            'url' => $request->normalizedUrl(),
-            'wp_username' => $request->validated('wp_username'),
-        ]);
+        // Le site est partagé : son nom et son adresse ne changent pas sous
+        // les pieds des autres comptes qui l'ont connecté. Les identifiants,
+        // eux, n'appartiennent qu'à l'utilisateur.
+        if ($request->canRenameSite()) {
+            $site->name = $request->validated('name');
+        }
+
+        if ($request->canChangeUrl()) {
+            $site->url = $request->normalizedUrl();
+        }
+
+        $site->wp_username = $request->validated('wp_username');
 
         // Champ laissé vide : on conserve le secret déjà enregistré.
         if (filled($request->validated('application_password'))) {
@@ -122,25 +185,44 @@ class SiteController extends Controller
             ->with('status', 'Site mis à jour.');
     }
 
-    public function destroy(WordpressSite $site): RedirectResponse
+    /**
+     * Supprime la connexion de l'utilisateur. Le site et ses articles ne
+     * disparaissent que si plus personne ne l'a connecté : le travail des
+     * autres comptes n'est jamais effacé.
+     */
+    public function destroy(Request $request, WordpressSite $site): RedirectResponse
     {
         $this->authorize('delete', $site);
 
-        $site->delete();
+        $siteDeleted = DB::transaction(function () use ($request, $site) {
+            $site->connections()->where('user_id', $request->user()->id)->delete();
+
+            if ($site->connections()->exists()) {
+                return false;
+            }
+
+            $site->delete();
+
+            return true;
+        });
+
         $this->context->forget();
         $this->context->refresh();
 
         return redirect()
             ->route('sites.index')
-            ->with('status', 'Site supprimé ainsi que ses articles synchronisés.');
+            ->with('status', $siteDeleted
+                ? 'Site supprimé ainsi que ses articles synchronisés.'
+                : 'Site retiré de vos sites. Il reste disponible pour les autres comptes qui l’ont connecté.');
     }
 
     /**
-     * Test de connexion en AJAX depuis la liste des sites.
+     * Test de connexion en AJAX depuis la liste des sites : ce sont les
+     * identifiants de l'utilisateur qui sont testés.
      */
     public function test(WordpressSite $site): JsonResponse
     {
-        $this->authorize('update', $site);
+        $this->authorize('test', $site);
 
         $result = $this->connection->test($site);
 
@@ -155,9 +237,10 @@ class SiteController extends Controller
     }
 
     /**
-     * Lance la synchronisation en arrière-plan.
+     * Lance la synchronisation en arrière-plan, avec les identifiants de
+     * l'utilisateur s'il a connecté le site.
      */
-    public function sync(WordpressSite $site): JsonResponse
+    public function sync(Request $request, WordpressSite $site): JsonResponse
     {
         $this->authorize('sync', $site);
 
@@ -175,7 +258,7 @@ class SiteController extends Controller
 
         $site->forceFill(['sync_status' => 'queued', 'sync_message' => null])->save();
 
-        SynchronizeSiteJob::dispatch($site);
+        SynchronizeSiteJob::dispatch($site, true, $request->user()->id);
         $this->worker->ensureRunning();
 
         return response()->json([

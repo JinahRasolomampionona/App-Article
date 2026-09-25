@@ -9,7 +9,7 @@
 @endphp
 
 <div class="ag-card mb-3" id="ag-corrections"
-     data-url="{{ route('statistics.series', ['site' => $siteFilter]) }}"
+     data-url="{{ route('statistics.series', $filter->query(['status' => null])) }}"
      data-granularity="{{ $granularity }}"
      data-series="{{ json_encode($series, JSON_THROW_ON_ERROR) }}">
     <div class="ag-card__header">

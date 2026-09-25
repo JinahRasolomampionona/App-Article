@@ -38,6 +38,8 @@ class AuthenticationTest extends TestCase
 
     public function test_l_inscription_refuse_un_email_deja_utilise(): void
     {
+        config(['articleguard.open_registration' => true]);
+
         User::factory()->create(['email' => 'marie@example.com']);
 
         $this->post('/register', [

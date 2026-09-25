@@ -2,39 +2,64 @@
 
 namespace App\Support;
 
+use App\Models\SiteConnection;
+use App\Models\User;
+use Illuminate\Support\Collection;
+
 /**
- * Agents à qui un article peut être assigné.
+ * Comptes à qui un article peut être attribué.
  *
- * La liste vient de la configuration : elle n'a pas vocation à être modifiée
- * depuis l'interface, et rester en configuration évite une table et un écran
- * d'administration pour cinq noms.
+ * Chaque agent a son propre compte : la liste vient donc des utilisateurs
+ * actifs de rôle « agent ». Elle est mémorisée pour la requête, le tableau des
+ * articles la consultant pour chaque ligne.
  */
 class AgentCatalog
 {
-    /**
-     * @return array<int, string>
-     */
-    public static function all(): array
-    {
-        /** @var array<int, string> $agents */
-        $agents = config('articleguard.agents', []);
-
-        return array_values(array_unique(array_filter(array_map('strval', $agents))));
-    }
-
-    public static function has(?string $agent): bool
-    {
-        return $agent !== null && in_array($agent, self::all(), true);
-    }
+    /** @var Collection<int, User>|null */
+    protected static ?Collection $cache = null;
 
     /**
-     * Normalise une saisie : un agent inconnu vaut « non assigné » plutôt que
-     * d'être enregistré tel quel.
+     * @return Collection<int, User>
      */
-    public static function normalize(?string $agent): ?string
+    public static function all(): Collection
     {
-        $agent = trim((string) $agent);
+        return static::$cache ??= User::query()
+            ->agents()
+            ->active()
+            ->orderBy('name')
+            ->get(['id', 'name', 'email', 'role', 'is_active']);
+    }
 
-        return self::has($agent) ? $agent : null;
+    /** @var array<int, Collection<int, User>> */
+    protected static array $bySite = [];
+
+    /**
+     * Agents actifs ayant connecté ce site : les seuls à qui l'un de ses
+     * articles peut être attribué, puisqu'ils y travaillent avec leurs propres
+     * identifiants WordPress.
+     *
+     * @return Collection<int, User>
+     */
+    public static function forSite(int $siteId): Collection
+    {
+        return static::$bySite[$siteId] ??= static::all()
+            ->whereIn('id', SiteConnection::query()->where('wordpress_site_id', $siteId)->pluck('user_id'))
+            ->values();
+    }
+
+    public static function find(int|string|null $id): ?User
+    {
+        if (! is_numeric($id)) {
+            return null;
+        }
+
+        return static::all()->firstWhere('id', (int) $id);
+    }
+
+    /** À appeler après la création ou la modification d'un compte. */
+    public static function flush(): void
+    {
+        static::$cache = null;
+        static::$bySite = [];
     }
 }

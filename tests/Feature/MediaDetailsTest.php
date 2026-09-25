@@ -121,15 +121,19 @@ class MediaDetailsTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_les_medias_d_un_autre_utilisateur_sont_inaccessibles(): void
+    /**
+     * Espace partagé : la médiathèque est ouverte à tous les comptes actifs,
+     * mais un compte désactivé perd l'accès immédiatement.
+     */
+    public function test_un_compte_desactive_n_accede_plus_a_la_mediatheque(): void
     {
         Http::fake();
 
-        $other = WordpressSite::factory()->create(['url' => 'https://ailleurs.test']);
+        $this->user->forceFill(['is_active' => false])->save();
 
         $this->actingAs($this->user)
-            ->getJson(route('sites.media.show', [$other, 12]))
-            ->assertForbidden();
+            ->getJson(route('sites.media.show', [$this->site, 12]))
+            ->assertUnauthorized();
 
         Http::assertNothingSent();
     }

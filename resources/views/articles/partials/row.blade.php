@@ -76,7 +76,7 @@
     {{-- Statut : sélecteur dès qu'un problème a été détecté, badge sinon.
          « OK » et l'absence d'audit ne se décrètent pas à la main. --}}
     <td>
-        @if($article->statusIsEditable())
+        @if($article->statusIsEditable() && auth()->user()->can('update', $article))
             <select class="form-select form-select-sm ag-status-select ag-status-select--{{ $article->statusVariant() }}"
                     data-status-url="{{ route('articles.status', $article) }}"
                     aria-label="Statut de l’article {{ $article->title }}">
@@ -102,35 +102,13 @@
         @endif
     </td>
 
-    {{-- Agent chargé de la correction : assignation libre, indépendante de
-         l'audit. --}}
-    <td>
-        <select class="form-select form-select-sm ag-agent-select"
-                data-agent-url="{{ route('articles.agent', $article) }}"
-                aria-label="Agent assigné à l’article {{ $article->title }}">
-            <option value="">Non assigné</option>
-            @foreach(\App\Support\AgentCatalog::all() as $agent)
-                <option value="{{ $agent }}" @selected($article->agent === $agent)>{{ $agent }}</option>
-            @endforeach
-
-            {{-- L'agent enregistré ne figure plus dans la liste configurée :
-                 il reste proposé pour ne pas effacer l'assignation en silence. --}}
-            @if($article->agent && ! \App\Support\AgentCatalog::has($article->agent))
-                <option value="{{ $article->agent }}" selected>{{ $article->agent }} (retiré)</option>
-            @endif
-        </select>
+    {{-- Statut de traitement (qui travaille sur l'article), rafraîchi par
+         sondage sans recharger la ligne. --}}
+    <td data-agent-cell>
+        @include('articles.partials.agent-cell', ['article' => $article])
     </td>
 
-    <td class="text-end">
-        <div class="d-inline-flex gap-1">
-            <button type="button" class="btn btn-sm btn-outline-secondary"
-                    data-audit-url="{{ route('articles.audit', $article) }}"
-                    data-busy-label=""
-                    data-bs-toggle="tooltip" title="Relancer l’audit"
-                    aria-label="Relancer l’audit de {{ $article->title }}">
-                <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
-            </button>
-            <a href="{{ route('articles.edit', $article) }}" class="btn btn-sm btn-outline-primary">Éditer</a>
-        </div>
+    <td class="text-end" data-actions-cell>
+        @include('articles.partials.actions-cell', ['article' => $article])
     </td>
 </tr>

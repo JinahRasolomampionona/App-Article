@@ -3,7 +3,9 @@
 namespace App\Services\Stats;
 
 use App\Models\ArticleStatusHistory;
+use App\Models\User;
 use App\Models\WordpressArticle;
+use App\Services\Assignment\ArticleLockService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -15,11 +17,19 @@ use Illuminate\Support\Facades\Log;
  * article déjà conforme ne doit pas gonfler les statistiques. La détection a
  * donc besoin du statut précédent, que les appelants fournissent avant
  * d'écrire le nouveau.
+ *
+ * La correction est attribuée à l'agent qui détient l'article, ou à défaut au
+ * dernier agent qui l'a traité : l'audit réseau, en file d'attente, peut
+ * confirmer la correction quelques instants après la libération.
  */
 class StatisticsRecorder
 {
     /** Statuts qui valent correction, et donc entrée d'historique. */
     protected const RECORDED = [WordpressArticle::AUDIT_OK, WordpressArticle::AUDIT_FIXED];
+
+    public function __construct(
+        protected ArticleLockService $locks,
+    ) {}
 
     public function record(
         WordpressArticle $article,
@@ -43,6 +53,10 @@ class StatisticsRecorder
             return null;
         }
 
+        // Agent au moment de la correction : l'historique doit rester juste
+        // même si l'article est repris ensuite par quelqu'un d'autre.
+        $agent = $this->locks->responsibleAgent($article);
+
         return ArticleStatusHistory::create([
             'user_id' => $site->user_id,
             'wordpress_site_id' => $site->id,
@@ -54,84 +68,23 @@ class StatisticsRecorder
             'article_url' => $article->link,
             'status' => $status,
             'resolved_manually' => $manual,
-            // Agent assigné au moment de la correction : l'historique doit
-            // rester juste même si l'article est réassigné ensuite.
-            'agent' => $article->agent,
+            'agent' => $agent?->name,
+            'agent_user_id' => $agent?->id,
             'issues_resolved' => $issuesResolved,
             'recorded_at' => now(),
         ]);
     }
 
     /**
-     * Réattribue à un agent la conformité déjà acquise d'un article.
-     *
-     * Assigner quelqu'un à un article déjà « OK » ou « Corrigé » doit le faire
-     * apparaître dans ses statistiques : sans cela, seuls les articles
-     * corrigés *après* l'assignation lui seraient comptés.
-     *
-     * C'est bien une réattribution, pas une nouvelle correction : l'entrée
-     * existante change de titulaire plutôt que d'être doublée — l'article n'a
-     * été corrigé qu'une fois, et le total général ne doit pas bouger. Seule
-     * la dernière entrée est touchée : une correction antérieure faite par
-     * quelqu'un d'autre lui reste acquise.
-     *
-     * Un article encore « à corriger » ne donne lieu à rien : il n'y a pas
-     * encore de correction à attribuer, et `record()` posera l'agent le moment
-     * venu.
+     * Rattache au compte d'un agent les entrées d'historique qui ne portent
+     * que son nom — saisies avant que les agents n'aient leur compte.
      */
-    public function reassign(WordpressArticle $article, ?string $agent): ?ArticleStatusHistory
+    public function linkAgentHistory(User $agent): int
     {
-        if (! in_array($article->audit_status, self::RECORDED, true)) {
-            return null;
-        }
-
-        $entry = ArticleStatusHistory::query()
-            ->where('wordpress_article_id', $article->id)
-            ->orderByDesc('recorded_at')
-            ->orderByDesc('id')
-            ->first();
-
-        if ($entry === null) {
-            // Article conforme jamais inscrit — historique incomplet : on le
-            // rattrape en datant l'entrée de sa dernière analyse.
-            return $this->recordExisting($article, $agent);
-        }
-
-        $entry->forceFill(['agent' => $agent])->save();
-
-        return $entry;
-    }
-
-    /**
-     * Crée l'entrée manquante d'un article déjà conforme, datée de ce que l'on
-     * sait de sa correction plutôt que de l'instant présent.
-     */
-    protected function recordExisting(WordpressArticle $article, ?string $agent): ?ArticleStatusHistory
-    {
-        $site = $article->site;
-
-        if ($site === null) {
-            return null;
-        }
-
-        return ArticleStatusHistory::create([
-            'user_id' => $site->user_id,
-            'wordpress_site_id' => $site->id,
-            'site_name' => $site->name,
-            'site_url' => $site->url,
-            'wordpress_article_id' => $article->id,
-            'wp_id' => $article->wp_id,
-            'article_title' => $article->title,
-            'article_url' => $article->link,
-            'status' => $article->audit_status,
-            'resolved_manually' => $article->status_set_manually_at !== null
-                && $article->audit_status === WordpressArticle::AUDIT_FIXED,
-            'agent' => $agent,
-            'issues_resolved' => 0,
-            'recorded_at' => $article->issues_resolved_at
-                ?? $article->last_audited_at
-                ?? now(),
-        ]);
+        return ArticleStatusHistory::query()
+            ->whereNull('agent_user_id')
+            ->whereRaw('lower(agent) = ?', [mb_strtolower(trim((string) $agent->name))])
+            ->update(['agent_user_id' => $agent->id]);
     }
 
     /**
@@ -166,7 +119,6 @@ class StatisticsRecorder
                 'a.title',
                 'a.link',
                 'a.audit_status',
-                'a.agent',
                 'a.issues_resolved_at',
                 'a.status_set_manually_at',
                 'a.last_audited_at',
@@ -190,7 +142,7 @@ class StatisticsRecorder
                         // Un statut posé à la main ne vaut que pour « Corrigé ».
                         'resolved_manually' => $article->status_set_manually_at !== null
                             && $article->audit_status === WordpressArticle::AUDIT_FIXED,
-                        'agent' => $article->agent,
+                        'agent' => null,
                         'issues_resolved' => 0,
                         // À défaut de date de correction, la dernière analyse
                         // reste le repère le plus proche de la réalité.

@@ -1,16 +1,19 @@
 @php
     $needsFix = $navNeedsFix ?? 0;
+    $isAdmin = auth()->user()->isAdmin();
 
     // Identifiants uniques : la sidebar est rendue deux fois (fixe et offcanvas),
     // et `aria-controls` doit désigner un seul élément.
     $scope = $navScope ?? 'main';
 
+    // Les pages d'administration ne sont proposées qu'à l'Admin ; les routes
+    // elles-mêmes sont protégées côté serveur (porte « admin »).
     $sections = [
         [
             'key' => 'articleguard',
             'label' => 'ArticleGuard',
             'badge' => $needsFix,
-            'links' => [
+            'links' => array_values(array_filter([
                 [
                     'href' => route('dashboard'),
                     'icon' => 'bi-grid-1x2',
@@ -40,15 +43,24 @@
                 [
                     'href' => route('statistics.index'),
                     'icon' => 'bi-bar-chart-line',
-                    'label' => 'Statistiques',
+                    'label' => $isAdmin ? 'Statistiques' : 'Mes statistiques',
                     'active' => request()->routeIs('statistics.*'),
                 ],
-            ],
+            ])),
         ],
-        [
+    ];
+
+    if ($isAdmin) {
+        $sections[] = [
             'key' => 'configuration',
             'label' => 'Configuration',
             'links' => [
+                [
+                    'href' => route('agents.index'),
+                    'icon' => 'bi-people',
+                    'label' => 'Agents',
+                    'active' => request()->routeIs('agents.*'),
+                ],
                 [
                     'href' => route('settings.edit'),
                     'icon' => 'bi-sliders',
@@ -56,8 +68,8 @@
                     'active' => request()->routeIs('settings.*'),
                 ],
             ],
-        ],
-    ];
+        ];
+    }
 @endphp
 
 <a href="{{ route('dashboard') }}" class="ag-brand">
@@ -108,7 +120,7 @@
         <span class="ag-user__avatar" aria-hidden="true">{{ auth()->user()->initials() }}</span>
         <span class="flex-grow-1 min-w-0">
             <span class="ag-user__name d-block text-truncate">{{ auth()->user()->name }}</span>
-            <span class="ag-user__mail d-block text-truncate">{{ auth()->user()->email }}</span>
+            <span class="ag-user__mail d-block text-truncate">{{ auth()->user()->roleLabel() }} · {{ auth()->user()->email }}</span>
         </span>
         <form method="POST" action="{{ route('logout') }}">
             @csrf

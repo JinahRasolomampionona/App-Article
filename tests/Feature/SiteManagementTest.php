@@ -22,7 +22,7 @@ class SiteManagementTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->user = User::factory()->create();
+        $this->user = User::factory()->admin()->create();
     }
 
     public function test_un_site_peut_etre_connecte_et_la_synchronisation_est_programmee(): void

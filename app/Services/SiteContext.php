@@ -7,7 +7,7 @@ use App\Models\WordpressSite;
 use Illuminate\Support\Collection;
 
 /**
- * Site WordPress actuellement sélectionné.
+ * Site WordPress actuellement sélectionné, parmi les sites de l'espace partagé.
  *
  * Le choix est mémorisé en session : passer du dashboard aux articles puis aux
  * audits conserve le même site sans le repasser dans chaque URL.
@@ -29,7 +29,8 @@ class SiteContext
             return collect();
         }
 
-        return $this->sites ??= $user->sites()->orderBy('name')->get();
+        // Admin : tous les sites. Agent : ceux qu'il a connectés lui-même.
+        return $this->sites ??= WordpressSite::query()->accessibleBy($user)->orderBy('name')->get();
     }
 
     public function current(?User $user = null): ?WordpressSite

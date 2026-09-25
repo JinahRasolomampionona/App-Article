@@ -105,7 +105,7 @@ class QueueWorkerLauncherTest extends TestCase
             'example.com/wp-json/wp/v2/users/me*' => Http::response(['id' => 1, 'name' => 'Éditeur']),
         ]);
 
-        $this->actingAs(User::factory()->create())
+        $this->actingAs(User::factory()->admin()->create())
             ->post(route('sites.store'), [
                 'name' => 'Exemple',
                 'url' => 'example.com',
@@ -121,7 +121,7 @@ class QueueWorkerLauncherTest extends TestCase
     public function test_la_synchronisation_manuelle_demarre_un_worker(): void
     {
         Queue::fake();
-        $user = User::factory()->create();
+        $user = User::factory()->admin()->create();
         $site = WordpressSite::factory()->for($user)->create();
 
         $this->actingAs($user)->postJson("/sites/{$site->id}/sync")->assertOk();

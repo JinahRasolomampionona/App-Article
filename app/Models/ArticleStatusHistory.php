@@ -32,6 +32,7 @@ class ArticleStatusHistory extends Model
         'status',
         'resolved_manually',
         'agent',
+        'agent_user_id',
         'issues_resolved',
         'recorded_at',
     ];
@@ -59,6 +60,12 @@ class ArticleStatusHistory extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /** Compte de l'agent crédité de la correction. */
+    public function agentUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'agent_user_id');
     }
 
     /** Le site d'origine n'existe plus : la ligne ne vaut plus que comme archive. */

@@ -1,10 +1,19 @@
-@php $site = $site ?? null; @endphp
+@php
+    $site = $site ?? null;
+    // Site partagé avec d'autres comptes : nom et adresse communs, en lecture
+    // seule (le serveur ignore de toute façon une modification non permise).
+    $lockName = $lockName ?? false;
+    $lockUrl = $lockUrl ?? false;
+@endphp
 
 <div class="mb-3">
     <label for="name" class="form-label">Nom du site</label>
     <input type="text" id="name" name="name" value="{{ old('name', $site?->name) }}"
            class="form-control @error('name') is-invalid @enderror"
-           required placeholder="Bijouteries" autofocus>
+           required placeholder="Bijouteries" @if($lockName) readonly @else autofocus @endif>
+    @if($lockName)
+        <div class="ag-hint mt-1">Site partagé avec d’autres comptes : son nom est commun.</div>
+    @endif
     @error('name')<div class="invalid-feedback">{{ $message }}</div>@enderror
 </div>
 
@@ -12,10 +21,18 @@
     <label for="url" class="form-label">Domaine / URL</label>
     <input type="text" id="url" name="url" value="{{ old('url', $site?->url) }}"
            class="form-control @error('url') is-invalid @enderror"
-           required placeholder="https://exemple.com" aria-describedby="url-hint">
+           required placeholder="https://exemple.com" aria-describedby="url-hint" @readonly($lockUrl)>
     <div class="ag-hint mt-1" id="url-hint">
-        L’API REST doit être accessible sur <span class="ag-mono">/wp-json/wp/v2</span>.
-        Les adresses internes et privées sont refusées pour des raisons de sécurité.
+        @if($lockUrl)
+            Site partagé avec d’autres comptes : son adresse ne peut pas être modifiée.
+        @else
+            L’API REST doit être accessible sur <span class="ag-mono">/wp-json/wp/v2</span>.
+            Les adresses internes et privées sont refusées pour des raisons de sécurité.
+            @unless($site)
+                Si ce site a déjà été connecté par un autre compte, vous le rejoignez avec
+                vos propres identifiants et partagez ses articles.
+            @endunless
+        @endif
     </div>
     @error('url')<div class="invalid-feedback">{{ $message }}</div>@enderror
 </div>

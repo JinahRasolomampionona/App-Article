@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
 use App\Services\Stats\CorrectionStatsService;
+use App\Services\Stats\StatisticsFilter;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -31,7 +32,7 @@ class CorrectionStatsTest extends TestCase
         // Un mercredi : la semaine ISO et le mois courants sont sans ambiguïté.
         CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-23 10:00:00'));
 
-        $this->user = User::factory()->create();
+        $this->user = User::factory()->admin()->create();
         $this->site = WordpressSite::factory()->for($this->user)->create(['url' => 'https://example.com']);
         $this->stats = app(CorrectionStatsService::class);
     }
@@ -90,27 +91,45 @@ class CorrectionStatsTest extends TestCase
         $this->assertSame(1, $today['manual']);
     }
 
-    public function test_l_historique_d_un_autre_utilisateur_n_est_pas_compte(): void
+    /**
+     * Un Agent ne reçoit que sa propre série, même s'il demande celle d'un
+     * autre agent — l'Admin, lui, voit l'ensemble.
+     */
+    public function test_la_serie_d_un_agent_ne_compte_que_ses_corrections(): void
     {
-        $other = User::factory()->create();
-        $otherSite = WordpressSite::factory()->for($other)->create(['url' => 'https://ailleurs.test']);
+        $daniella = User::factory()->create(['name' => 'Daniella']);
+        $jinah = User::factory()->create(['name' => 'Jinah']);
 
-        ArticleStatusHistory::create([
-            'user_id' => $other->id,
-            'wordpress_site_id' => $otherSite->id,
-            'site_name' => $otherSite->name,
-            'status' => WordpressArticle::AUDIT_FIXED,
-            'recorded_at' => CarbonImmutable::parse('2026-09-23 08:00:00'),
-        ]);
+        foreach ([$daniella, $daniella, $jinah] as $agent) {
+            ArticleStatusHistory::create([
+                'user_id' => $this->user->id,
+                'wordpress_site_id' => $this->site->id,
+                'site_name' => $this->site->name,
+                'status' => WordpressArticle::AUDIT_FIXED,
+                'agent' => $agent->name,
+                'agent_user_id' => $agent->id,
+                'recorded_at' => CarbonImmutable::parse('2026-09-23 08:00:00'),
+            ]);
+        }
 
-        $this->history('2026-09-23 08:00:00');
+        $day = fn (array $series) => collect($series)->firstWhere('key', '2026-09-23')['articles'];
 
-        $this->assertSame(1, $this->bucket('day', '2026-09-23')['articles']);
+        $this->assertSame(3, $day($this->stats->series(StatisticsFilter::forAdmin($this->user), 'day')));
+        $this->assertSame(1, $day($this->stats->series(StatisticsFilter::forAgent($jinah), 'day')));
+
+        // Filtre forgé : Jinah demande la série de Daniella, elle obtient la sienne.
+        $forged = new StatisticsFilter(viewer: $jinah, agent: $daniella->id);
+        $this->assertSame(1, $day($this->stats->series($forged, 'day')));
+
+        $this->actingAs($jinah)
+            ->getJson(route('statistics.series', ['granularity' => 'day', 'agent' => $daniella->id]))
+            ->assertOk()
+            ->assertJsonPath('summary.articles', 1);
     }
 
     public function test_la_serie_couvre_une_periode_continue_sans_trou(): void
     {
-        $series = $this->stats->series($this->user, 'day');
+        $series = $this->stats->series(StatisticsFilter::forAdmin($this->user), 'day');
 
         $this->assertCount(14, $series);
         $this->assertSame('2026-09-10', $series[0]['key']);
@@ -126,7 +145,7 @@ class CorrectionStatsTest extends TestCase
             $this->history('2026-09-23 08:00:00');
         }
 
-        $summary = $this->stats->summary($this->user)['day'];
+        $summary = $this->stats->summary(StatisticsFilter::forAdmin($this->user))['day'];
 
         $this->assertSame(4, $summary['articles']);
         $this->assertSame(2, $summary['previous_articles']);
@@ -137,7 +156,7 @@ class CorrectionStatsTest extends TestCase
     {
         $this->history('2026-09-23 08:00:00');
 
-        $this->assertNull($this->stats->summary($this->user)['day']['trend']);
+        $this->assertNull($this->stats->summary(StatisticsFilter::forAdmin($this->user))['day']['trend']);
     }
 
     /**
@@ -224,7 +243,7 @@ class CorrectionStatsTest extends TestCase
      */
     protected function bucket(string $granularity, string $key): array
     {
-        $series = $this->stats->series($this->user, $granularity, 8);
+        $series = $this->stats->series(StatisticsFilter::forAdmin($this->user), $granularity, 8);
         $bucket = collect($series)->firstWhere('key', $key);
 
         $this->assertNotNull($bucket, "Période {$key} absente de la série {$granularity}.");

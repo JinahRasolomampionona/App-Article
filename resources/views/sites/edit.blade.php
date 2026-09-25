@@ -18,7 +18,12 @@
                 <form method="POST" action="{{ route('sites.update', $site) }}" novalidate>
                     @csrf
                     @method('PUT')
-                    @include('sites._form', ['site' => $site])
+                    @include('sites._form', [
+                        'site' => $site,
+                        // Site partagé : nom et adresse communs aux autres comptes.
+                        'lockName' => $sharedWith->isNotEmpty() && ! auth()->user()->isAdmin(),
+                        'lockUrl' => $sharedWith->isNotEmpty(),
+                    ])
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary">Enregistrer</button>
@@ -49,6 +54,13 @@
                     <dt class="col-5 fw-normal ag-muted">Articles</dt>
                     <dd class="col-7">{{ $site->articles()->count() }}</dd>
                 </dl>
+                @if($sharedWith->isNotEmpty())
+                    <p class="ag-hint mt-3 mb-0">
+                        <i class="bi bi-people me-1" aria-hidden="true"></i>
+                        Aussi connecté par {{ $sharedWith->pluck('user.name')->filter()->join(', ', ' et ') }},
+                        avec leurs propres identifiants. Les articles sont partagés.
+                    </p>
+                @endif
             </div>
         </div>
     </div>

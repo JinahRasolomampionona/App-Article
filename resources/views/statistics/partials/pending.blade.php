@@ -25,7 +25,15 @@
                            class="ag-table__title text-truncate">{{ $article->title }}</a>
                         <span class="ag-table__url">{{ $article->relativePath() }}</span>
                     </td>
-                    <td><span class="ag-hint">{{ $article->site?->name }}</span></td>
+                    <td>
+                        <span class="ag-hint d-block">{{ $article->site?->name }}</span>
+                        @if($article->isLocked())
+                            <span class="ag-lock ag-lock--{{ $article->lockStateFor(auth()->user()) }}">
+                                <span class="ag-lock__dot" aria-hidden="true"></span>
+                                {{ $article->isLockedBy(auth()->user()) ? 'En cours par vous' : 'En cours par '.$article->activeAgentName() }}
+                            </span>
+                        @endif
+                    </td>
                     <td class="text-end">
                         <span class="ag-badge ag-badge--danger">{{ $article->issues_count }}</span>
                     </td>

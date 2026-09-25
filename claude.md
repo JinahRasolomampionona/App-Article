@@ -1391,3 +1391,371 @@ d'audit ; - filtres ; - badges ; - interface claire et légère.
 Le résultat final doit donner l'impression d'un **outil SaaS
 professionnel de gestion et d'audit de contenu WordPress**, et non d'un
 simple projet étudiant ou d'une maquette.
+
+# ÉVOLUTION — GESTION DES AGENTS ET ASSIGNATION DES ARTICLES
+
+Cette section complète les instructions précédentes du projet ArticleGuard WP.
+
+IMPORTANT :
+Les fonctionnalités de gestion des articles, sites WordPress, audits, statistiques et assignation existent déjà en partie. Ne pas recréer ce qui existe et ne pas casser les fonctionnalités actuelles.
+
+Objectif : améliorer le système actuel pour avoir une vraie gestion des rôles Admin/Agent et une assignation fiable des articles dans un espace de travail partagé.
+
+## 1. UTILISATEURS ET RÔLES
+
+Créer 2 rôles :
+
+- Admin
+- Agent
+
+Les agents utilisés actuellement sont notamment :
+
+- Daniella
+- Jinah
+- Koloina
+- Niriantsoa
+- Miranto
+
+Conserver ces noms dans les données de test/initialisation si nécessaire.
+
+### Admin
+
+L'Admin peut :
+
+- voir tous les sites ;
+- voir tous les articles ;
+- voir tous les agents ;
+- voir les statistiques globales ;
+- filtrer les statistiques par agent, site, date et statut ;
+- voir les articles assignés à chaque agent ;
+- gérer les comptes Agents.
+
+### Agent
+
+Un Agent peut :
+
+- voir les articles disponibles ;
+- voir les articles en cours par les autres agents ;
+- prendre un article ;
+- modifier uniquement un article qui lui est assigné ;
+- libérer son article ;
+- terminer une correction ;
+- consulter uniquement ses propres statistiques.
+
+Un Agent ne doit jamais pouvoir consulter les statistiques d'un autre Agent, même en modifiant directement une URL ou un paramètre.
+
+Les permissions doivent être contrôlées côté Laravel (Policy/Middleware), pas uniquement avec JavaScript ou Blade.
+
+---
+
+## 2. ASSIGNATION DES ARTICLES
+
+Le système actuel possède déjà une colonne "Agent" avec une liste déroulante.
+
+Conserver cette interface mais sécuriser et améliorer son fonctionnement.
+
+Un article peut être :
+
+- Non assigné
+- En cours par Daniella
+- En cours par Jinah
+- En cours par Koloina
+- etc.
+
+Un article ne peut avoir qu'un seul Agent actif à la fois.
+
+Lorsqu'un Agent prend un article, celui-ci devient immédiatement "En cours par [Nom]".
+
+Les autres Agents doivent voir cet état rapidement lorsqu'ils consultent le même site.
+
+---
+
+## 3. EMPÊCHER LES DOUBLONS
+
+C'est une règle critique.
+
+Deux Agents ne doivent jamais pouvoir prendre le même article simultanément.
+
+Le contrôle doit être effectué côté serveur avec une transaction/verrouillage de base de données.
+
+Ne pas se contenter de désactiver le bouton en JavaScript.
+
+Si Daniella prend l'article 123 et que Jinah tente de le prendre au même moment :
+
+- Daniella obtient le verrou ;
+- Jinah reçoit un message indiquant que l'article est déjà pris par Daniella.
+
+Exemple :
+
+"Cet article est actuellement traité par Daniella."
+
+---
+
+## 4. VERROUILLAGE DE L'ÉDITION
+
+Si un article est assigné à Daniella :
+
+Daniella :
+→ peut ouvrir et modifier l'article.
+
+Jinah :
+→ peut voir l'article ;
+→ voit "En cours par Daniella" ;
+→ ne peut pas modifier l'article.
+
+Même si Jinah tente d'accéder directement à l'URL d'édition ou à une requête AJAX, Laravel doit refuser l'opération.
+
+---
+
+## 5. VERROUILLAGE TEMPOREL
+
+Prévoir un verrou avec expiration afin qu'un article ne reste pas bloqué définitivement si un Agent ferme son navigateur.
+
+Ajouter si nécessaire :
+
+- assigned_to
+- locked_at
+- lock_expires_at
+
+Utiliser un heartbeat AJAX pendant que l'Agent travaille dans l'éditeur.
+
+Si le verrou expire, l'article redevient disponible.
+
+Un Agent peut également utiliser :
+
+"Libérer l'article"
+
+pour rendre immédiatement l'article disponible.
+
+---
+
+## 6. MISE À JOUR EN TEMPS RÉEL
+
+Pas besoin de WebSocket pour la première version.
+
+Utiliser un polling AJAX léger toutes les 5 à 10 secondes sur la page Articles afin de mettre à jour les assignations.
+
+Exemple :
+
+Daniella prend :
+
+Article "Guide des bagues"
+
+Jinah consulte le même site.
+
+Elle doit voir automatiquement :
+
+🟣 En cours par Daniella
+
+sans devoir recharger toute la page.
+
+Ne pas recharger inutilement tous les articles : mettre uniquement à jour les informations d'assignation/statut.
+
+---
+
+## 7. STATISTIQUES
+
+Conserver la page Statistiques existante mais adapter les données aux nouveaux rôles.
+
+### Admin
+
+Voir les statistiques globales :
+
+- total articles ;
+- articles OK/corrigés ;
+- articles à corriger ;
+- articles en cours ;
+- corrections par Agent ;
+- statistiques par site ;
+- dernière activité ;
+- date de correction.
+
+Filtres :
+
+- Site
+- Agent
+- Date
+- Statut
+
+### Agent
+
+Afficher uniquement ses propres statistiques :
+
+- articles corrigés ;
+- articles en cours ;
+- articles à corriger ;
+- corrections cette semaine ;
+- corrections ce mois ;
+- dernière activité.
+
+Ne jamais envoyer au navigateur les statistiques des autres agents.
+
+---
+
+## 8. NE PAS CONFONDRE LES STATUTS
+
+Il faut conserver deux notions différentes :
+
+### Statut d'audit
+
+- OK / Corrigé
+- À corriger
+
+### Statut de traitement
+
+- Non assigné
+- En cours par Daniella
+- En cours par Jinah
+- etc.
+
+Exemple :
+
+Article :
+"Guide des bagues"
+
+Statut audit :
+À corriger
+
+Agent :
+En cours par Daniella
+
+Cela signifie que Daniella travaille actuellement sur un article qui comporte encore des problèmes.
+
+---
+
+## 9. FIN DE CORRECTION
+
+Lorsqu'un Agent termine :
+
+1. sauvegarder les modifications WordPress ;
+2. relancer l'audit ;
+3. vérifier le résultat ;
+4. enregistrer l'activité ;
+5. mettre à jour les statistiques ;
+6. libérer l'article.
+
+Si l'audit ne détecte plus de problème :
+
+→ Statut : Corrigé
+
+Si des problèmes restent :
+
+→ Statut : À corriger
+
+Dans les deux cas, l'article peut redevenir disponible après la fin du traitement.
+
+---
+
+## 10. HISTORIQUE
+
+Enregistrer au minimum :
+
+- Agent ayant pris l'article ;
+- date/heure de prise ;
+- date/heure de libération ;
+- date/heure de correction ;
+- résultat de l'audit.
+
+Cela servira aux statistiques Admin.
+
+Créer ou adapter les tables existantes uniquement si nécessaire.
+
+---
+
+## 11. INTERFACE
+
+Conserver exactement le style actuel d'ArticleGuard :
+
+- Bootstrap ;
+- design professionnel et sobre ;
+- fond clair ;
+- violet comme couleur principale ;
+- badges discrets ;
+- animations légères ;
+- AJAX ;
+- responsive.
+
+Ne pas refaire toute l'interface.
+
+Améliorer uniquement les éléments nécessaires.
+
+Dans la colonne Agent :
+
+Non assigné
+Daniella
+Jinah
+Koloina
+Niriantsoa
+Miranto
+
+Afficher clairement l'état de l'article.
+
+Exemples :
+
+🟢 Disponible
+🟣 En cours par vous
+🟠 En cours par Daniella
+
+---
+
+## 12. SÉCURITÉ
+
+Toutes les règles doivent être contrôlées côté serveur.
+
+Un Agent ne doit jamais pouvoir :
+
+- modifier l'Agent assigné à un autre article ;
+- libérer l'article d'un autre Agent ;
+- modifier un article verrouillé par un autre Agent ;
+- consulter les statistiques d'un autre Agent ;
+- accéder aux pages Admin ;
+- modifier son propre rôle ;
+- contourner les permissions via une URL ou AJAX.
+
+Le JavaScript ne doit jamais être considéré comme une sécurité.
+
+---
+
+## 13. IMPORTANT — AVANT DE MODIFIER LE CODE
+
+Analyser d'abord le code existant et réutiliser :
+
+- modèles ;
+- migrations ;
+- controllers ;
+- services ;
+- routes ;
+- Policies ;
+- vues Blade ;
+- JavaScript ;
+- système actuel d'assignation ;
+- système actuel de statistiques.
+
+Ne pas créer de tables ou fonctionnalités en double si elles existent déjà.
+
+Faire uniquement les modifications nécessaires.
+
+Avant de coder, résumer brièvement :
+
+1. ce qui existe actuellement ;
+2. ce qui doit être modifié ;
+3. les migrations nécessaires ;
+4. les modèles concernés ;
+5. les routes/controllers concernés ;
+6. la stratégie de verrouillage.
+
+Puis implémenter progressivement.
+
+## RÉSULTAT ATTENDU
+
+ArticleGuard doit fonctionner comme un espace de travail partagé :
+
+Plusieurs Agents
+→ mêmes sites WordPress
+→ mêmes articles
+→ chacun prend les articles qu'il traite
+→ les autres voient immédiatement qui travaille dessus
+→ impossible de modifier simultanément le même article
+→ chaque Agent voit uniquement ses propres statistiques
+→ Admin voit toutes les statistiques et activités.
+→ Chaque agent a son propre compte

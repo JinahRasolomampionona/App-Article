@@ -2,14 +2,19 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Http\Controllers\Auth\RegisteredUserController;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Password;
 
 class RegisterRequest extends FormRequest
 {
+    /**
+     * Inscription publique fermée dès qu'un compte existe (sauf
+     * AG_OPEN_REGISTRATION) : les comptes des agents sont créés par l'Admin.
+     */
     public function authorize(): bool
     {
-        return true;
+        return RegisteredUserController::registrationOpen();
     }
 
     /**

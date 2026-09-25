@@ -2,15 +2,24 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
+use App\Models\WordpressSite;
 use App\Services\Stats\ArticleStatisticsService;
 use App\Services\Stats\CorrectionStatsService;
-use App\Support\AgentCatalog;
+use App\Services\Stats\StatisticsFilter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
 /**
- * Statistiques des articles : état courant et historique des corrections.
+ * Statistiques des articles.
+ *
+ * - Admin : statistiques globales, filtrables par site, agent, date, statut ;
+ * - Agent : uniquement ses propres statistiques.
+ *
+ * La restriction est portée par StatisticsFilter (construit ici à partir de
+ * l'utilisateur connecté) : un Agent qui ajoute `?agent=12` à l'URL obtient
+ * quand même ses propres chiffres, et rien des autres n'est rendu.
  */
 class StatisticsController extends Controller
 {
@@ -21,29 +30,34 @@ class StatisticsController extends Controller
 
     public function index(Request $request): View
     {
-        $user = $request->user();
-
+        $filter = StatisticsFilter::fromRequest($request);
         $granularity = $this->corrections->normalize($request->query('granularity'));
-        $siteId = $this->siteFilter($request);
-        $status = $request->query('status');
-        $agent = $this->agentFilter($request);
+
+        if (! $request->user()->isAdmin()) {
+            return $this->agentView($filter, $granularity);
+        }
+
+        $agentFilter = $filter->agent();
 
         return view('statistics.index', [
-            'overview' => $this->statistics->overview($user),
-            'sites' => $this->statistics->perSite($user),
-            'archivedSites' => $this->statistics->archivedSites($user),
-            'agentRows' => $this->statistics->perAgent($user, $siteId),
-            'history' => $this->statistics->history($user, $siteId, $status, $agent),
-            'historyTotals' => $this->statistics->historyTotals($user, $siteId, $status, $agent),
-            'pending' => $this->statistics->pendingArticles($user, $siteId),
-            'series' => $this->corrections->series($user, $granularity, siteId: $siteId),
-            'summary' => $this->corrections->summary($user, $siteId),
+            'filter' => $filter,
+            'overview' => $this->statistics->overview($filter),
+            'sites' => $this->statistics->perSite($filter),
+            'archivedSites' => $this->statistics->archivedSites($filter),
+            'agentRows' => $this->statistics->perAgent($filter),
+            'history' => $this->statistics->history($filter),
+            'historyTotals' => $this->statistics->historyTotals($filter),
+            'pending' => $this->statistics->pendingArticles($filter),
+            'inProgress' => $this->statistics->inProgressArticles($filter),
+            'series' => $this->corrections->series($filter, $granularity),
+            'summary' => $this->corrections->summary($filter),
             'granularity' => $granularity,
-            'siteFilter' => $siteId,
-            'statusFilter' => $status,
-            'agentFilter' => $agent,
-            'agents' => AgentCatalog::all(),
-            'userSites' => $user->sites()->orderBy('name')->get(['id', 'name']),
+            'siteFilter' => $filter->siteId,
+            'statusFilter' => $filter->status,
+            'agentFilter' => $agentFilter,
+            'agentFilterLabel' => is_int($agentFilter) ? User::query()->whereKey($agentFilter)->value('name') : null,
+            'agents' => User::query()->agents()->orderBy('name')->get(['id', 'name', 'is_active']),
+            'userSites' => WordpressSite::query()->accessibleBy($filter->viewer)->orderBy('name')->get(['id', 'name']),
         ]);
     }
 
@@ -52,43 +66,37 @@ class StatisticsController extends Controller
      */
     public function series(Request $request): JsonResponse
     {
-        $user = $request->user();
+        $filter = StatisticsFilter::fromRequest($request);
         $granularity = $this->corrections->normalize($request->query('granularity'));
-        $siteId = $this->siteFilter($request);
 
         return response()->json([
             'ok' => true,
             'granularity' => $granularity,
-            'series' => $this->corrections->series($user, $granularity, siteId: $siteId),
-            'summary' => $this->corrections->summary($user, $siteId)[$granularity],
+            'series' => $this->corrections->series($filter, $granularity),
+            'summary' => $this->corrections->summary($filter)[$granularity],
         ]);
     }
 
     /**
-     * Le filtre de site est une entrée utilisateur : un identifiant qui
-     * n'appartient pas au compte est ignoré plutôt que de faire fuiter la
-     * présence d'un site tiers.
+     * Espace personnel d'un agent : ses chiffres, ses articles, son
+     * historique — rien d'autre n'est calculé ni envoyé au navigateur.
      */
-    protected function siteFilter(Request $request): ?int
+    protected function agentView(StatisticsFilter $filter, string $granularity): View
     {
-        $siteId = $request->query('site');
-
-        if (! is_numeric($siteId)) {
-            return null;
-        }
-
-        return $request->user()->sites()->whereKey((int) $siteId)->value('id');
-    }
-
-    /**
-     * `none` isole les corrections faites hors assignation ; un nom qui n'est
-     * plus configuré reste accepté, sans quoi l'historique d'un agent retiré
-     * deviendrait inaccessible.
-     */
-    protected function agentFilter(Request $request): ?string
-    {
-        $agent = trim((string) $request->query('agent', ''));
-
-        return $agent === '' ? null : $agent;
+        return view('statistics.agent', [
+            'filter' => $filter,
+            'me' => $this->statistics->agentOverview($filter),
+            'history' => $this->statistics->history($filter),
+            'historyTotals' => $this->statistics->historyTotals($filter),
+            'pending' => $this->statistics->pendingArticles($filter),
+            'inProgress' => $this->statistics->inProgressArticles($filter),
+            'series' => $this->corrections->series($filter, $granularity),
+            'summary' => $this->corrections->summary($filter),
+            'granularity' => $granularity,
+            'siteFilter' => $filter->siteId,
+            'statusFilter' => $filter->status,
+            'agentFilter' => null,
+            'userSites' => WordpressSite::query()->accessibleBy($filter->viewer)->orderBy('name')->get(['id', 'name']),
+        ]);
     }
 }

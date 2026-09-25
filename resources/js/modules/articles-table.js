@@ -1,4 +1,4 @@
-import { Modal } from 'bootstrap';
+import { Modal, Tooltip } from 'bootstrap';
 import { http } from './http.js';
 import { notify } from './toast.js';
 import { busy, debounce } from './busy.js';
@@ -78,6 +78,7 @@ export function initArticlesTable() {
             });
 
             body.innerHTML = data.html;
+            initTooltips(body);
             pagination.innerHTML = data.pagination;
             body.classList.add('ag-fade-in');
             setTimeout(() => body.classList.remove('ag-fade-in'), 250);
@@ -285,7 +286,31 @@ export function initArticlesTable() {
         }
     });
 
-    /* --- Agent assigné --- */
+    /* --- Prise en charge : liste « Agent », Prendre, Libérer --- */
+
+    /**
+     * Remplace la ligne par la version renvoyée par le serveur — qui fait
+     * foi, y compris quand il refuse (409 : un autre agent a été plus rapide).
+     */
+    function applyLockResult(row, data) {
+        if (!data || !row) return;
+
+        if (data.row) {
+            row.outerHTML = data.row;
+            const replaced = body.querySelector(`tr[data-article-id="${row.dataset.articleId}"]`);
+            replaced?.classList.add('ag-row-flash');
+            initTooltips(replaced);
+        } else {
+            applyCells(row, data);
+        }
+
+        syncSelection();
+
+        // La ligne peut sortir du tableau si un filtre d'agent est actif.
+        if (form.querySelector('[name="agent"]')?.value) {
+            load({ resetPage: false });
+        }
+    }
 
     body?.addEventListener('change', async (event) => {
         const select = event.target.closest('[data-agent-url]');
@@ -294,27 +319,128 @@ export function initArticlesTable() {
             return;
         }
 
+        const row = select.closest('tr');
         const previous = select.dataset.previous ?? '';
 
         select.disabled = true;
 
         try {
-            const data = await http.post(select.dataset.agentUrl, { agent: select.value || null });
+            const data = await http.post(select.dataset.agentUrl, {
+                agent: select.value ? Number(select.value) : null,
+            });
 
-            select.dataset.previous = select.value;
             notify.success(data.message);
-
-            // La ligne peut sortir du tableau si un filtre d'agent est actif :
-            // recharger évite d'afficher une ligne qui ne correspond plus.
-            if (form.querySelector('[name="agent"]')?.value) {
-                load({ resetPage: false });
-            }
+            applyLockResult(row, data);
         } catch (error) {
             select.value = previous;
-            notify.error(error.message);
-        } finally {
             select.disabled = false;
+            notify.error(error.message);
+            applyLockResult(row, error.payload);
         }
+    });
+
+    body?.addEventListener('click', async (event) => {
+        const take = event.target.closest('[data-take-url]');
+        const release = event.target.closest('[data-release-url]');
+        const button = take ?? release;
+
+        if (!button) return;
+
+        event.preventDefault();
+
+        if (release?.dataset.releaseConfirm && !window.confirm(release.dataset.releaseConfirm)) {
+            return;
+        }
+
+        const row = button.closest('tr');
+        const done = busy(button, '');
+
+        try {
+            const data = await http.post(take ? take.dataset.takeUrl : release.dataset.releaseUrl, {});
+
+            if (take && data.edit_url) {
+                // Pris : l'éditeur s'ouvre directement, verrou déjà posé.
+                window.location.href = data.edit_url;
+                return;
+            }
+
+            notify.success(data.message);
+            applyLockResult(row, data);
+        } catch (error) {
+            done();
+            notify.error(error.message);
+            applyLockResult(row, error.payload);
+        }
+    });
+
+    /* --- Sondage des assignations --- */
+
+    /**
+     * Met à jour les cellules « Agent » et « Actions » d'une ligne, seulement
+     * si l'état a changé : une liste déroulante ouverte n'est pas refermée à
+     * chaque passage.
+     */
+    function applyCells(row, state) {
+        if (!row || !state) return;
+
+        const agentCell = row.querySelector('[data-agent-cell]');
+        const actionsCell = row.querySelector('[data-actions-cell]');
+        const currentKey = agentCell?.querySelector('[data-lock-key]')?.dataset.lockKey;
+
+        if (currentKey === state.key) return;
+
+        // Ne pas écraser la liste que l'utilisateur est en train de manipuler.
+        if (agentCell?.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') {
+            return;
+        }
+
+        disposeTooltips(agentCell);
+        disposeTooltips(actionsCell);
+
+        if (agentCell && state.agent_html) agentCell.innerHTML = state.agent_html;
+        if (actionsCell && state.actions_html) actionsCell.innerHTML = state.actions_html;
+
+        initTooltips(row);
+        row.classList.remove('ag-row-flash');
+        void row.offsetWidth;
+        row.classList.add('ag-row-flash');
+    }
+
+    const pollUrl = root.dataset.pollUrl;
+    const pollDelay = Math.max(5, Number(root.dataset.pollSeconds || 8)) * 1000;
+    let polling = false;
+
+    async function poll() {
+        if (polling || document.hidden || !pollUrl) return;
+
+        const ids = Array.from(body.querySelectorAll('tr[data-article-id]')).map(
+            (row) => row.dataset.articleId,
+        );
+
+        if (ids.length === 0) return;
+
+        polling = true;
+
+        try {
+            const params = new URLSearchParams();
+            ids.forEach((id) => params.append('ids[]', id));
+
+            const data = await http.get(`${pollUrl}?${params.toString()}`);
+
+            Object.entries(data.articles ?? {}).forEach(([id, state]) => {
+                applyCells(body.querySelector(`tr[data-article-id="${id}"]`), state);
+            });
+        } catch {
+            // Sondage silencieux : une coupure réseau passagère ne mérite pas
+            // un toast toutes les huit secondes.
+        } finally {
+            polling = false;
+        }
+    }
+
+    setInterval(poll, pollDelay);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) poll();
     });
 
     // Mémorise la valeur affichée pour pouvoir revenir en arrière en cas d'échec.
@@ -370,6 +496,18 @@ export function initArticlesTable() {
     }
 
     syncSelection();
+}
+
+function initTooltips(scope) {
+    scope?.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((element) => {
+        Tooltip.getOrCreateInstance(element);
+    });
+}
+
+function disposeTooltips(scope) {
+    scope?.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((element) => {
+        Tooltip.getInstance(element)?.dispose();
+    });
 }
 
 function severityVariant(severity) {

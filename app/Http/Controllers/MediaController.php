@@ -69,7 +69,7 @@ class MediaController extends Controller
      */
     public function update(Request $request, WordpressSite $site, int $media): JsonResponse
     {
-        $this->authorize('update', $site);
+        $this->authorize('manageMedia', $site);
 
         $validated = $request->validate([
             'alt_text' => ['present', 'nullable', 'string', 'max:512'],
@@ -100,7 +100,7 @@ class MediaController extends Controller
 
     public function store(Request $request, WordpressSite $site): JsonResponse
     {
-        $this->authorize('update', $site);
+        $this->authorize('manageMedia', $site);
 
         $request->validate([
             'file' => ['required', 'file', 'image', 'mimes:jpg,jpeg,png,gif,webp', 'max:10240'],

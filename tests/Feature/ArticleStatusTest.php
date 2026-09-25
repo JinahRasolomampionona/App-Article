@@ -105,6 +105,7 @@ class ArticleStatusTest extends TestCase
         ]);
 
         $this->assertFalse($article->statusIsEditable());
+        $this->lockFor($article, $this->user);
 
         $this->actingAs($this->user)
             ->post(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
@@ -124,14 +125,15 @@ class ArticleStatusTest extends TestCase
         $this->assertSame(WordpressArticle::AUDIT_NEEDS_FIX, $article->fresh()->audit_status);
     }
 
-    public function test_un_autre_utilisateur_ne_peut_pas_changer_le_statut(): void
+    public function test_un_autre_agent_ne_peut_pas_changer_le_statut_d_un_article_pris(): void
     {
         $article = $this->articleWithIssue();
         $intruder = User::factory()->create();
+        $this->connectSite($intruder, $this->site);
 
         $this->actingAs($intruder)
-            ->post(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
-            ->assertForbidden();
+            ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
+            ->assertStatus(409);
 
         $this->assertSame(WordpressArticle::AUDIT_NEEDS_FIX, $article->fresh()->audit_status);
     }
@@ -163,6 +165,7 @@ class ArticleStatusTest extends TestCase
             'detected_at' => now(),
         ]);
 
-        return $article;
+        // Seul le détenteur du verrou peut modifier le statut.
+        return $this->lockFor($article, $this->user);
     }
 }

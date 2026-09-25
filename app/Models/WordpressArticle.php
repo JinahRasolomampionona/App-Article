@@ -43,8 +43,8 @@ class WordpressArticle extends Model
         'wordpress_modified_at',
         'synced_at',
         'audit_status',
-        'agent',
-        'agent_assigned_at',
+        // Le verrou (`assigned_to`, `locked_at`, `lock_expires_at`) n'est pas
+        // assignable en masse : il ne se pose que par ArticleLockService.
         'issues_count',
         'last_audited_at',
         'issues_resolved_at',
@@ -62,7 +62,9 @@ class WordpressArticle extends Model
             'wordpress_modified_at' => 'datetime',
             'synced_at' => 'datetime',
             'last_audited_at' => 'datetime',
-            'agent_assigned_at' => 'datetime',
+            'assigned_to' => 'integer',
+            'locked_at' => 'datetime',
+            'lock_expires_at' => 'datetime',
             'issues_resolved_at' => 'datetime',
             'status_set_manually_at' => 'datetime',
         ];
@@ -96,6 +98,99 @@ class WordpressArticle extends Model
     public function openIssues(): HasMany
     {
         return $this->hasMany(ArticleAuditIssue::class)->whereNull('resolved_at');
+    }
+
+    /** Compte qui détient (ou a détenu, si le verrou a expiré) l'article. */
+    public function assignee(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'assigned_to');
+    }
+
+    public function assignments(): HasMany
+    {
+        return $this->hasMany(ArticleAssignment::class);
+    }
+
+    /* --- Verrou de traitement ------------------------------------------------ */
+
+    /**
+     * Un agent travaille-t-il actuellement sur l'article ?
+     *
+     * Un verrou expiré ne compte plus, même si la colonne n'a pas encore été
+     * nettoyée : la disponibilité ne dépend jamais du passage d'une tâche
+     * planifiée.
+     */
+    public function isLocked(): bool
+    {
+        return $this->assigned_to !== null
+            && $this->lock_expires_at !== null
+            && $this->lock_expires_at->isFuture();
+    }
+
+    public function isLockedBy(?User $user): bool
+    {
+        return $user !== null && $this->isLocked() && $this->assigned_to === $user->id;
+    }
+
+    public function isLockedByOther(?User $user): bool
+    {
+        return $this->isLocked() && ($user === null || $this->assigned_to !== $user->id);
+    }
+
+    /** Identifiant de l'agent actif, `null` si l'article est disponible. */
+    public function activeAgentId(): ?int
+    {
+        return $this->isLocked() ? $this->assigned_to : null;
+    }
+
+    /** Nom de l'agent actif, `null` si l'article est disponible. */
+    public function activeAgentName(): ?string
+    {
+        if (! $this->isLocked()) {
+            return null;
+        }
+
+        return $this->assignee?->name ?? 'un autre agent';
+    }
+
+    /**
+     * État de traitement vu par un utilisateur : `available`, `mine`, `other`.
+     * Distinct du statut d'audit — un article peut être « À corriger » et
+     * « En cours par Daniella » à la fois.
+     */
+    public function lockStateFor(?User $user): string
+    {
+        if (! $this->isLocked()) {
+            return 'available';
+        }
+
+        return $this->isLockedBy($user) ? 'mine' : 'other';
+    }
+
+    /**
+     * Articles actuellement pris en charge.
+     *
+     * @param  Builder<WordpressArticle>  $query
+     * @return Builder<WordpressArticle>
+     */
+    public function scopeLocked(Builder $query): Builder
+    {
+        return $query->whereNotNull('assigned_to')->where('lock_expires_at', '>', now());
+    }
+
+    /**
+     * Articles disponibles : jamais pris, libérés, ou dont le verrou a expiré.
+     *
+     * @param  Builder<WordpressArticle>  $query
+     * @return Builder<WordpressArticle>
+     */
+    public function scopeAvailable(Builder $query): Builder
+    {
+        return $query->where(function (Builder $q) {
+            $q->whereNull('assigned_to')
+                ->orWhereNull('lock_expires_at')
+                ->orWhere('lock_expires_at', '<=', now());
+        });
     }
 
     /**
@@ -293,22 +388,22 @@ class WordpressArticle extends Model
     }
 
     /**
-     * Filtre par agent. La valeur spéciale `none` isole les articles encore
-     * non assignés, qui sont précisément ceux à répartir.
+     * Filtre par agent actif. `none` isole les articles disponibles — ceux à
+     * répartir —, un identifiant de compte ceux qu'il traite en ce moment.
      *
      * @param  Builder<WordpressArticle>  $query
      * @return Builder<WordpressArticle>
      */
-    public function scopeForAgent(Builder $query, ?string $agent): Builder
+    public function scopeForAgent(Builder $query, int|string|null $agent): Builder
     {
         if ($agent === null || $agent === '') {
             return $query;
         }
 
         if ($agent === 'none') {
-            return $query->whereNull('agent');
+            return $query->available();
         }
 
-        return $query->where('agent', $agent);
+        return $query->locked()->where('assigned_to', (int) $agent);
     }
 }

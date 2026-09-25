@@ -28,10 +28,12 @@
             <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">
                 <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Connecter un site
             </a>
+
         </div>
     </div>
 @else
-<div id="ag-articles" data-url="{{ route('articles.index') }}">
+<div id="ag-articles" data-url="{{ route('articles.index') }}"
+     data-poll-url="{{ route('articles.assignments') }}" data-poll-seconds="{{ $pollSeconds }}">
 
     {{-- Filtres --}}
     <form id="ag-filters" class="ag-card mb-3" method="GET" action="{{ route('articles.index') }}">
@@ -62,9 +64,10 @@
                     <label for="ag-agent" class="form-label">Agent</label>
                     <select id="ag-agent" name="agent" class="form-select">
                         <option value="">Tous</option>
-                        <option value="none" @selected($filters['agent'] === 'none')>Non assignés</option>
-                        @foreach($agents as $agent)
-                            <option value="{{ $agent }}" @selected($filters['agent'] === $agent)>{{ $agent }}</option>
+                        <option value="none" @selected($filters['agent'] === 'none')>Disponibles</option>
+                        <option value="{{ auth()->id() }}" @selected($filters['agent'] === auth()->id())>En cours par moi</option>
+                        @foreach($agents->where('id', '!=', auth()->id()) as $agent)
+                            <option value="{{ $agent->id }}" @selected($filters['agent'] === $agent->id)>En cours par {{ $agent->name }}</option>
                         @endforeach
                     </select>
                 </div>

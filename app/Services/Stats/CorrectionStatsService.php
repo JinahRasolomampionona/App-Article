@@ -2,7 +2,6 @@
 
 namespace App\Services\Stats;
 
-use App\Models\User;
 use App\Models\WordpressArticle;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -33,7 +32,7 @@ class CorrectionStatsService
      *
      * @return array<int, array{key: string, label: string, full_label: string, articles: int, ok: int, fixed: int, manual: int}>
      */
-    public function series(User $user, string $granularity, ?int $periods = null, ?int $siteId = null): array
+    public function series(StatisticsFilter $filter, string $granularity, ?int $periods = null): array
     {
         $granularity = $this->normalize($granularity);
         $periods = $this->clampPeriods($periods ?? self::DEFAULT_PERIODS[$granularity]);
@@ -41,7 +40,7 @@ class CorrectionStatsService
         $start = $this->startOf($this->now(), $granularity)
             ->sub($this->interval($granularity), $periods - 1);
 
-        $rows = $this->aggregate($user, $granularity, $start, $siteId);
+        $rows = $this->aggregate($filter, $granularity, $start);
 
         $buckets = [];
         $cursor = $start;
@@ -72,13 +71,13 @@ class CorrectionStatsService
      *
      * @return array<string, array{articles: int, ok: int, fixed: int, manual: int, previous_articles: int, trend: int|null}>
      */
-    public function summary(User $user, ?int $siteId = null): array
+    public function summary(StatisticsFilter $filter): array
     {
         $summary = [];
 
         foreach (self::GRANULARITIES as $granularity) {
             // Deux périodes suffisent : la courante et celle qui précède.
-            $series = $this->series($user, $granularity, 2, $siteId);
+            $series = $this->series($filter, $granularity, 2);
             [$previous, $current] = $series;
 
             $summary[$granularity] = [
@@ -112,13 +111,16 @@ class CorrectionStatsService
      *
      * @return array<string, object>
      */
-    protected function aggregate(User $user, string $granularity, CarbonImmutable $start, ?int $siteId = null): array
+    protected function aggregate(StatisticsFilter $filter, string $granularity, CarbonImmutable $start): array
     {
         $bucket = $this->bucketExpression($granularity);
+        $agent = $filter->agent();
 
         return DB::table('article_status_history as h')
-            ->where('h.user_id', $user->id)
-            ->when($siteId, fn ($query) => $query->where('h.wordpress_site_id', $siteId))
+            ->when($filter->siteId, fn ($query) => $query->where('h.wordpress_site_id', $filter->siteId))
+            // Un Agent ne reçoit jamais que sa propre série (voir StatisticsFilter).
+            ->when(is_int($agent), fn ($query) => $query->where('h.agent_user_id', $agent))
+            ->when($agent === 'none', fn ($query) => $query->whereNull('h.agent_user_id')->whereNull('h.agent'))
             ->where('h.recorded_at', '>=', $start)
             ->groupBy(DB::raw($bucket))
             ->selectRaw(

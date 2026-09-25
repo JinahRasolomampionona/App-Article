@@ -24,7 +24,7 @@ class ArticleManagementTest extends TestCase
     {
         parent::setUp();
 
-        $this->user = User::factory()->create();
+        $this->user = User::factory()->admin()->create();
         $this->site = WordpressSite::factory()->for($this->user)->create(['url' => 'https://example.com']);
     }
 
@@ -189,6 +189,8 @@ class ArticleManagementTest extends TestCase
             ]),
         ]);
 
+        $this->lockFor($article, $this->user);
+
         $response = $this->actingAs($this->user)->putJson(route('articles.update', $article), [
             'title' => 'Nouveau titre',
             'content' => '<h1>Unique</h1><p>Nouveau.</p><img src="https://example.com/i.jpg" alt="Bague">',
@@ -216,6 +218,8 @@ class ArticleManagementTest extends TestCase
         $article = $this->article('Titre', ['wp_id' => 100]);
 
         Http::fake(['*/wp/v2/posts/100*' => Http::response(['message' => 'Sorry, you are not allowed'], 403)]);
+
+        $this->lockFor($article, $this->user);
 
         $this->actingAs($this->user)
             ->putJson(route('articles.update', $article), [
@@ -260,6 +264,8 @@ class ArticleManagementTest extends TestCase
             ]);
         });
 
+        $this->lockFor($article, $this->user);
+
         $this->actingAs($this->user)
             ->putJson(route('articles.update', $article), [
                 'title' => 'Nouveau titre',
@@ -296,6 +302,8 @@ class ArticleManagementTest extends TestCase
             ]);
         });
 
+        $this->lockFor($article, $this->user);
+
         $response = $this->actingAs($this->user)->putJson(route('articles.update', $article), [
             'title' => 'Nouveau titre',
         ]);
@@ -311,6 +319,8 @@ class ArticleManagementTest extends TestCase
 
         $autreSite = WordpressSite::factory()->for($this->user)->create(['url' => 'https://autre.example.com']);
         $categorieEtrangere = WordpressCategory::factory()->for($autreSite, 'site')->create();
+
+        $this->lockFor($article, $this->user);
 
         $this->actingAs($this->user)
             ->putJson(route('articles.update', $article), [
@@ -354,23 +364,47 @@ class ArticleManagementTest extends TestCase
 
     /* --- Autorisations -------------------------------------------------------- */
 
-    public function test_un_utilisateur_ne_peut_pas_ouvrir_l_article_d_un_autre_compte(): void
+    public function test_un_agent_connecte_au_meme_site_consulte_sans_modifier(): void
     {
-        $intrus = User::factory()->create();
-        $article = $this->article('Privé');
+        $agent = User::factory()->create();
+        $this->connectSite($agent, $this->site);
+        $article = $this->article('Partagé');
 
-        $this->actingAs($intrus)->get(route('articles.edit', $article))->assertForbidden();
-        $this->actingAs($intrus)->get(route('articles.show', $article))->assertForbidden();
-        $this->actingAs($intrus)->postJson(route('articles.audit', $article))->assertForbidden();
+        // Même site, articles partagés : consultation ouverte…
+        $this->actingAs($agent)->get(route('articles.show', $article))->assertOk();
+        $this->actingAs($agent)->get(route('articles.edit', $article))
+            ->assertOk()
+            ->assertSee('data-readonly="1"', false)
+            ->assertSee('Prendre l’article');
+
+        // … mais aucune écriture sans avoir pris l'article.
+        $this->actingAs($agent)
+            ->putJson(route('articles.update', $article), ['title' => 'Piraté'])
+            ->assertStatus(409);
+
+        $this->assertSame('Partagé', $article->fresh()->title);
     }
 
-    public function test_un_utilisateur_ne_peut_pas_modifier_le_site_d_un_autre_compte(): void
+    public function test_un_agent_ne_voit_pas_les_sites_qu_il_n_a_pas_connectes(): void
     {
-        $intrus = User::factory()->create();
+        Queue::fake();
 
-        $this->actingAs($intrus)->get(route('sites.edit', $this->site))->assertForbidden();
-        $this->actingAs($intrus)->postJson(route('sites.sync', $this->site))->assertForbidden();
-        $this->actingAs($intrus)->delete(route('sites.destroy', $this->site))->assertForbidden();
+        $agent = User::factory()->create();
+        $article = $this->article('Privé');
+
+        $this->actingAs($agent)->get(route('sites.index'))->assertOk()->assertDontSee($this->site->url);
+        $this->actingAs($agent)->get(route('articles.show', $article))->assertForbidden();
+        $this->actingAs($agent)->get(route('articles.edit', $article))->assertForbidden();
+        $this->actingAs($agent)->postJson(route('articles.take', $article))->assertForbidden();
+        $this->actingAs($agent)->get(route('sites.edit', $this->site))->assertForbidden();
+        $this->actingAs($agent)->put(route('sites.update', $this->site), [
+            'name' => 'Piraté', 'url' => $this->site->url,
+        ])->assertForbidden();
+        $this->actingAs($agent)->postJson(route('sites.test', $this->site))->assertForbidden();
+        $this->actingAs($agent)->postJson(route('sites.sync', $this->site))->assertForbidden();
+        $this->actingAs($agent)->delete(route('sites.destroy', $this->site))->assertForbidden();
+
+        $this->assertDatabaseHas('wordpress_sites', ['id' => $this->site->id]);
     }
 
     public function test_une_synchronisation_deja_en_cours_n_est_pas_relancee(): void
@@ -392,15 +426,12 @@ class ArticleManagementTest extends TestCase
             ->assertJson(['sync_status' => 'running', 'queue_stalled' => false]);
     }
 
-    public function test_l_audit_en_masse_ignore_les_articles_d_un_autre_compte(): void
+    public function test_l_audit_en_masse_ignore_les_identifiants_inconnus(): void
     {
         Queue::fake();
 
-        $intrus = User::factory()->create();
-        $article = $this->article('Privé');
-
-        $this->actingAs($intrus)
-            ->postJson(route('articles.bulk-audit'), ['ids' => [$article->id]])
+        $this->actingAs($this->user)
+            ->postJson(route('articles.bulk-audit'), ['ids' => [999999]])
             ->assertOk()
             ->assertJsonPath('queued', 0);
 

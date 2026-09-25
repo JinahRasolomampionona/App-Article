@@ -7,11 +7,7 @@
 
         <div class="ag-tabs ms-auto" role="tablist" aria-label="Filtre de statut">
             @foreach(['' => 'Tous', 'ok' => 'OK', 'fixed' => 'Corrigés'] as $value => $label)
-                <a href="{{ route('statistics.index', array_filter([
-                        'site' => $siteFilter,
-                        'agent' => $agentFilter,
-                        'status' => $value ?: null,
-                    ])) }}"
+                <a href="{{ route('statistics.index', $filter->query(['status' => $value ?: null])) }}"
                    role="tab" class="text-decoration-none {{ (string) $statusFilter === (string) $value ? 'is-active' : '' }}"
                    aria-selected="{{ (string) $statusFilter === (string) $value ? 'true' : 'false' }}">
                     {{ $label }}
@@ -22,8 +18,10 @@
 
     <div class="ag-card__body border-bottom">
         <p class="ag-hint mb-0">
-            @if($agentFilter)
-                <strong>{{ $agentFilter === 'none' ? 'Corrections non assignées' : 'Corrections de '.$agentFilter }}</strong> ·
+            @if($agentFilter === 'none')
+                <strong>Corrections sans agent</strong> ·
+            @elseif($agentFilter && ! empty($agentFilterLabel))
+                <strong>Corrections de {{ $agentFilterLabel }}</strong> ·
             @endif
             {{ number_format($historyTotals['total'], 0, ',', ' ') }} entrée(s) sur
             {{ $historyTotals['sites'] }} site(s) ·
@@ -70,6 +68,9 @@
                     <td>
                         @if($entry->agent)
                             <span class="ag-chip">{{ $entry->agent }}</span>
+                            @if(! $entry->agent_user_id)
+                                <span class="ag-hint d-block">sans compte</span>
+                            @endif
                         @else
                             <span class="ag-hint">Non assigné</span>
                         @endif

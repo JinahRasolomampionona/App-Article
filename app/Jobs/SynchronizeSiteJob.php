@@ -33,10 +33,15 @@ class SynchronizeSiteJob implements ShouldQueue
     public function __construct(
         public WordpressSite $site,
         public bool $auditAfterwards = true,
+        // Compte ayant lancé la synchronisation : ses propres identifiants
+        // WordPress sont utilisés (personne n'est connecté dans un worker).
+        public ?int $userId = null,
     ) {}
 
     public function handle(WordPressSyncService $sync): void
     {
+        $this->site->useConnectionOf($this->userId);
+
         $this->site->forceFill([
             'sync_status' => 'running',
             'sync_message' => null,

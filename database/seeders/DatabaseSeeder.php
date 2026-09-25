@@ -3,23 +3,43 @@
 namespace Database\Seeders;
 
 use App\Models\User;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
+use App\Services\Stats\StatisticsRecorder;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Str;
 
+/**
+ * Données d'initialisation : un Admin et les comptes des agents.
+ *
+ * Rejouable : un compte existant (même e-mail) n'est pas recréé. Les mots de
+ * passe par défaut sont à changer dès la première connexion.
+ */
 class DatabaseSeeder extends Seeder
 {
-    use WithoutModelEvents;
-
-    /**
-     * Seed the application's database.
-     */
-    public function run(): void
+    public function run(StatisticsRecorder $recorder): void
     {
-        // User::factory(10)->create();
+        $password = (string) env('AG_SEED_PASSWORD', 'ArticleGuard2026');
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        $admin = User::query()->firstOrNew(['email' => 'admin@articleguard.test']);
+
+        if (! $admin->exists) {
+            $admin->fill(['name' => 'Admin', 'password' => $password]);
+            $admin->forceFill(['role' => User::ROLE_ADMIN, 'is_active' => true])->save();
+        }
+
+        foreach ((array) config('articleguard.seed_names') as $name) {
+            $email = Str::slug($name).'@articleguard.test';
+
+            // Un compte du même nom existe déjà (créé à la main) : on le garde.
+            if (User::query()->where('email', $email)->orWhereRaw('lower(name) = ?', [mb_strtolower($name)])->exists()) {
+                continue;
+            }
+
+            $agent = new User(['name' => $name, 'email' => $email, 'password' => $password]);
+            $agent->forceFill(['role' => User::ROLE_AGENT, 'is_active' => true])->save();
+
+            $recorder->linkAgentHistory($agent);
+        }
+
+        $this->command?->info('Comptes prêts (mot de passe par défaut : '.$password.'). Changez-les après la première connexion.');
     }
 }

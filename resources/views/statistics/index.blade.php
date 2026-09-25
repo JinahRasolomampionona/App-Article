@@ -2,7 +2,7 @@
 
 @section('title', 'Statistiques')
 @section('heading', 'Statistiques')
-@section('subheading', 'État des articles et historique des corrections, tous sites confondus.')
+@section('subheading', 'Vue Admin : état des articles, activité des agents et historique des corrections.')
 
 @section('breadcrumb')
     <a href="{{ route('dashboard') }}">Dashboard</a> <span class="mx-1">/</span>
@@ -20,6 +20,7 @@
                 et l’historique des corrections apparaîtront ici.
             </p>
             <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">Connecter un site</a>
+
         </div>
     </div>
 @else
@@ -68,56 +69,21 @@
                     <p class="ag-stat__value">{{ number_format($overview['needs_fix'], 0, ',', ' ') }}</p>
                     <p class="ag-stat__hint">articles à corriger</p>
                 </div>
+
+                <div class="ag-stat">
+                    <p class="ag-stat__label"><i class="bi bi-person-workspace" aria-hidden="true"></i> En cours</p>
+                    <p class="ag-stat__value">{{ number_format($overview['in_progress'], 0, ',', ' ') }}</p>
+                    <p class="ag-stat__hint">articles pris par un agent</p>
+                </div>
             </div>
         </div>
     </div>
 
-    {{-- Filtre de site, commun à l'historique et aux articles à corriger. --}}
-    <form method="GET" class="d-flex flex-wrap align-items-end gap-2 mb-3">
-        <div>
-            <label for="ag-stats-site" class="form-label small mb-1">Site</label>
-            <select id="ag-stats-site" name="site" class="form-select form-select-sm"
-                    onchange="this.form.submit()" style="min-width: 14rem;">
-                <option value="">Tous les sites</option>
-                @foreach($userSites as $option)
-                    <option value="{{ $option->id }}" @selected($siteFilter === $option->id)>{{ $option->name }}</option>
-                @endforeach
-            </select>
-        </div>
+    @include('statistics._filters')
 
-        <div>
-            <label for="ag-stats-agent" class="form-label small mb-1">Agent</label>
-            <select id="ag-stats-agent" name="agent" class="form-select form-select-sm"
-                    onchange="this.form.submit()" style="min-width: 12rem;">
-                <option value="">Tous les agents</option>
-                <option value="none" @selected($agentFilter === 'none')>Non assignés</option>
-                @foreach($agents as $agent)
-                    <option value="{{ $agent }}" @selected($agentFilter === $agent)>{{ $agent }}</option>
-                @endforeach
-
-                {{-- Agent retiré de la configuration : son historique reste
-                     consultable tant qu'il est filtré. --}}
-                @if($agentFilter && $agentFilter !== 'none' && ! in_array($agentFilter, $agents, true))
-                    <option value="{{ $agentFilter }}" selected>{{ $agentFilter }} (retiré)</option>
-                @endif
-            </select>
-        </div>
-
-        {{-- Le filtre de statut est porté par les onglets de l'historique :
-             le conserver ici évite de le perdre en changeant de site. --}}
-        @if($statusFilter)
-            <input type="hidden" name="status" value="{{ $statusFilter }}">
-        @endif
-
-        @if($siteFilter || $agentFilter || $statusFilter)
-            <a href="{{ route('statistics.index') }}" class="btn btn-sm btn-outline-secondary">
-                Réinitialiser
-            </a>
-        @endif
-    </form>
-
-    @include('statistics.partials.per-site')
     @include('statistics.partials.per-agent')
+    @include('statistics.partials.in-progress')
+    @include('statistics.partials.per-site')
     @include('statistics.partials.activity')
     @include('statistics.partials.history')
     @include('statistics.partials.pending')

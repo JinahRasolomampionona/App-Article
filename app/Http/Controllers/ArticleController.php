@@ -4,13 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\UpdateArticleRequest;
 use App\Jobs\AuditArticleJob;
+use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
 use App\Services\Audit\AuditService;
 use App\Services\Audit\AuditSettings;
 use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
-use App\Services\Stats\StatisticsRecorder;
 use App\Services\WordPress\WordPressApiException;
 use App\Services\WordPress\WordPressArticleService;
 use App\Services\WordPress\WordPressSyncService;
@@ -50,6 +50,7 @@ class ArticleController extends Controller
                 'categoryCounts' => [],
                 'filters' => $this->filters($request),
                 'agents' => AgentCatalog::all(),
+                'pollSeconds' => (int) config('articleguard.locks.poll_seconds', 8),
             ]);
         }
 
@@ -86,6 +87,7 @@ class ArticleController extends Controller
             'categoryCounts' => $this->categoryCounts($site, $filters),
             'filters' => $filters,
             'agents' => AgentCatalog::all(),
+            'pollSeconds' => (int) config('articleguard.locks.poll_seconds', 8),
         ]);
     }
 
@@ -102,11 +104,17 @@ class ArticleController extends Controller
         ]);
     }
 
-    public function edit(WordpressArticle $article): View
+    /**
+     * Éditeur. Ouvert à tous en consultation ; modifiable seulement par
+     * l'agent qui détient l'article — les écritures sont de toute façon
+     * refusées côté serveur à quiconque ne détient pas le verrou.
+     */
+    public function edit(Request $request, WordpressArticle $article): View
     {
-        $this->authorize('update', $article);
+        $this->authorize('view', $article);
 
-        $article->load(['site', 'categories']);
+        $article->load(['site', 'categories', 'assignee:id,name']);
+        $user = $request->user();
         $this->context->remember($article->site);
 
         return view('articles.edit', [
@@ -116,7 +124,10 @@ class ArticleController extends Controller
             'selectedCategories' => $article->categories->pluck('id')->all(),
             'contentImages' => HtmlContent::make($article->content)->images(),
             'issues' => $article->openIssues()->get(),
-            'settings' => AuditSettings::forUser(auth()->user()),
+            'settings' => AuditSettings::forUser($article->site?->user),
+            'lockState' => $article->lockStateFor($user),
+            'canEdit' => $user->can('update', $article),
+            'heartbeatSeconds' => (int) config('articleguard.locks.heartbeat_seconds', 60),
         ]);
     }
 
@@ -147,7 +158,7 @@ class ArticleController extends Controller
         // les règles réseau (images) sont relancées en file d'attente.
         $this->audit->run(
             $article,
-            AuditSettings::forUser($request->user()),
+            AuditSettings::forUser($article->site?->user),
             allowNetwork: false,
             trigger: 'save',
         );
@@ -176,7 +187,7 @@ class ArticleController extends Controller
 
         $this->audit->run(
             $article,
-            AuditSettings::forUser(auth()->user()),
+            AuditSettings::forUser($article->site?->user),
             allowNetwork: true,
             trigger: 'manual',
         );
@@ -187,7 +198,7 @@ class ArticleController extends Controller
             'ok' => true,
             'message' => 'Audit terminé.',
             'audit' => $this->auditPayload($article),
-            'row' => view('articles.partials.row', ['article' => $article->load(['categories', 'openIssues'])])->render(),
+            'row' => view('articles.partials.row', ['article' => $article->load(['categories', 'openIssues', 'assignee:id,name'])])->render(),
         ]);
     }
 
@@ -199,51 +210,6 @@ class ArticleController extends Controller
      * nouvel audit. Le moteur d'audit garde le dernier mot : le prochain
      * passage rouvrira les remarques encore présentes.
      */
-    /**
-     * Assigne l'article à un agent, ou retire l'assignation.
-     */
-    public function updateAgent(Request $request, WordpressArticle $article): JsonResponse
-    {
-        $this->authorize('update', $article);
-
-        $request->validate([
-            'agent' => ['present', 'nullable', 'string', Rule::in(AgentCatalog::all())],
-        ], [
-            'agent.in' => 'Agent inconnu.',
-        ], ['agent' => 'agent']);
-
-        $agent = AgentCatalog::normalize($request->input('agent'));
-
-        $article->forceFill([
-            'agent' => $agent,
-            'agent_assigned_at' => $agent ? now() : null,
-        ])->save();
-
-        // Un article déjà conforme porte une correction acquise : elle suit
-        // l'assignation, sinon l'agent ne verrait dans ses statistiques que ce
-        // qu'il a corrigé après coup.
-        $reassigned = app(StatisticsRecorder::class)->reassign($article, $agent);
-
-        return response()->json([
-            'ok' => true,
-            'agent' => $agent,
-            'message' => $this->agentMessage($agent, $reassigned !== null),
-        ]);
-    }
-
-    protected function agentMessage(?string $agent, bool $reassigned): string
-    {
-        if ($agent === null) {
-            return $reassigned
-                ? 'Assignation retirée ; la correction n’est plus attribuée.'
-                : 'Assignation retirée.';
-        }
-
-        return $reassigned
-            ? 'Article assigné à '.$agent.'. La correction lui est attribuée.'
-            : 'Article assigné à '.$agent.'.';
-    }
-
     public function updateStatus(Request $request, WordpressArticle $article): JsonResponse
     {
         $this->authorize('update', $article);
@@ -270,7 +236,7 @@ class ArticleController extends Controller
                 ? 'Article marqué comme corrigé.'
                 : 'Article marqué comme à corriger.',
             'row' => view('articles.partials.row', [
-                'article' => $article->load(['categories', 'openIssues']),
+                'article' => $article->load(['categories', 'openIssues', 'assignee:id,name']),
             ])->render(),
         ]);
     }
@@ -287,7 +253,7 @@ class ArticleController extends Controller
 
         $articles = WordpressArticle::query()
             ->whereIn('id', $validated['ids'])
-            ->whereHas('site', fn ($query) => $query->where('user_id', $request->user()->id))
+            ->whereHas('site', fn ($query) => $query->accessibleBy($request->user()))
             ->get();
 
         foreach ($articles as $article) {
@@ -353,7 +319,7 @@ class ArticleController extends Controller
 
         return $site->articles()
             // Chargement anticipé : évite N+1 sur les catégories et les remarques.
-            ->with(['categories:id,name', 'openIssues:id,wordpress_article_id,rule_type,severity,message'])
+            ->with(['categories:id,name', 'openIssues:id,wordpress_article_id,rule_type,severity,message', 'assignee:id,name'])
             ->search($filters['search'])
             ->inCategories($filters['categories'], $filters['mode'])
             ->when($filters['status'] === 'needs_fix', fn ($query) => $query->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX))
@@ -434,19 +400,32 @@ class ArticleController extends Controller
             'status' => in_array($request->query('status'), ['needs_fix', 'ok', 'pending'], true)
                 ? (string) $request->query('status')
                 : 'all',
-            // `none` isole les articles non assignés ; tout autre nom inconnu
-            // est ignoré plutôt que de vider le tableau sans explication.
-            'agent' => $request->query('agent') === 'none'
-                ? 'none'
-                : AgentCatalog::normalize($request->query('agent')),
+            'agent' => $this->agentFilter($request),
             'per_page' => in_array($perPage, [10, 20, 50, 100], true) ? $perPage : 20,
         ];
+    }
+
+    /**
+     * Filtre d'agent : `none` (disponibles), `mine` (les miens) ou
+     * l'identifiant d'un compte. Une valeur inconnue est ignorée plutôt que de
+     * vider le tableau sans explication.
+     */
+    protected function agentFilter(Request $request): int|string|null
+    {
+        $agent = $request->query('agent');
+
+        return match (true) {
+            $agent === 'none' => 'none',
+            $agent === 'mine' => $request->user()->id,
+            is_numeric($agent) && User::query()->whereKey((int) $agent)->exists() => (int) $agent,
+            default => null,
+        };
     }
 
     protected function resolveSite(Request $request): ?WordpressSite
     {
         if ($request->filled('site')) {
-            $site = $request->user()->sites()->find($request->integer('site'));
+            $site = WordpressSite::query()->accessibleBy($request->user())->find($request->integer('site'));
 
             if ($site) {
                 $this->context->remember($site);
@@ -478,7 +457,7 @@ class ArticleController extends Controller
             'panel' => view('articles.partials.audit-panel', [
                 'article' => $article,
                 'issues' => $article->openIssues()->get(),
-                'settings' => AuditSettings::forUser(auth()->user()),
+                'settings' => AuditSettings::forUser($article->site?->user),
             ])->render(),
         ];
     }

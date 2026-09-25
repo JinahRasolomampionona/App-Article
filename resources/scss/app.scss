@@ -765,13 +765,72 @@ html.ag-nav-collapsed .ag-sidebar {
     border-radius: 8px;
 
     &:disabled {
-        opacity: 0.6;
+        opacity: 0.75;
+        background-color: #f7f8fb;
     }
 
     // Non assigné : l'absence de choix doit se voir sans crier.
     option[value=''] {
         color: var(--ag-muted);
     }
+
+    &--mine {
+        border-color: rgba(108, 76, 232, 0.45);
+    }
+}
+
+// Statut de traitement : Disponible / En cours par vous / En cours par X.
+// Une pastille et un libellé — la couleur n'est jamais la seule information.
+.ag-agent {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+}
+
+.ag-lock {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--ag-muted);
+
+    &__dot {
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: currentColor;
+        flex-shrink: 0;
+    }
+
+    &--available {
+        color: #1f7a50;
+    }
+
+    &--mine {
+        color: var(--ag-primary-dark);
+    }
+
+    &--other {
+        color: #9a5f10;
+    }
+}
+
+.ag-lock-panel {
+    &--mine {
+        border-color: rgba(108, 76, 232, 0.35);
+    }
+
+    &--other {
+        border-color: rgba(217, 139, 36, 0.35);
+    }
+}
+
+.ag-editor__surface.is-readonly {
+    background: #fafbfd;
+    cursor: default;
 }
 
 .ag-status-select {

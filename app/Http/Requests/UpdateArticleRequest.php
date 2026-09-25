@@ -2,14 +2,25 @@
 
 namespace App\Http\Requests;
 
+use Illuminate\Auth\Access\Response;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
 
 class UpdateArticleRequest extends FormRequest
 {
-    public function authorize(): bool
+    /**
+     * Seul le détenteur du verrou peut enregistrer. La réponse de la policy
+     * est renvoyée telle quelle : 409 et message lisible (« Cet article est
+     * actuellement traité par Daniella. ») plutôt qu'un 403 générique.
+     */
+    public function authorize(): Response|bool
     {
-        return $this->user()?->can('update', $this->route('article')) ?? false;
+        if ($this->user() === null) {
+            return false;
+        }
+
+        return Gate::forUser($this->user())->inspect('update', $this->route('article'));
     }
 
     /**

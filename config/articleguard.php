@@ -153,21 +153,39 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Agents de correction
+    | Agents et prise en charge des articles
     |--------------------------------------------------------------------------
     |
-    | Personnes à qui un article peut être assigné depuis le tableau. Il ne
-    | s'agit pas de comptes applicatifs : c'est une simple répartition du
-    | travail, conservée dans l'historique des statistiques.
+    | Chaque agent possède son compte (rôle « agent »), créé par un Admin
+    | depuis la page Agents. Un article pris par un agent est verrouillé
+    | pendant `ttl_minutes`, durée prolongée par le heartbeat de l'éditeur :
+    | un navigateur fermé libère l'article à l'expiration.
     |
-    | La liste est surchargeable par `AG_AGENTS` (noms séparés par des virgules).
+    | `seed_names` : comptes créés par `db:seed` (données d'initialisation).
     |
     */
 
-    'agents' => array_values(array_filter(array_map(
+    'locks' => [
+        'ttl_minutes' => (int) env('AG_LOCK_TTL_MINUTES', 30),
+        // Intervalle du heartbeat de l'éditeur, en secondes.
+        'heartbeat_seconds' => (int) env('AG_LOCK_HEARTBEAT_SECONDS', 60),
+        // Rafraîchissement des assignations sur la page Articles, en secondes.
+        'poll_seconds' => min(60, max(5, (int) env('AG_LOCK_POLL_SECONDS', 8))),
+    ],
+
+    'seed_names' => array_values(array_filter(array_map(
         'trim',
-        explode(',', (string) env('AG_AGENTS', 'Daniella,Niriantsoa,Jinah,Koloina,Miranto'))
+        explode(',', (string) env('AG_AGENTS', 'Daniella,Jinah,Koloina,Niriantsoa,Miranto'))
     ))),
+
+    /*
+    | Inscription publique. Fermée par défaut : dans un espace partagé, tout
+    | compte voit les sites de l'équipe, et c'est à l'Admin de créer les
+    | comptes. Le tout premier compte peut toujours s'inscrire (il devient
+    | Admin).
+    */
+
+    'open_registration' => (bool) env('AG_OPEN_REGISTRATION', false),
 
     /*
     |--------------------------------------------------------------------------

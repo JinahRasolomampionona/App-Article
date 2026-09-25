@@ -45,5 +45,9 @@
 @endsection
 
 @section('footer')
-    Pas encore de compte ? <a href="{{ route('register') }}">Créer un compte</a>
+    @if(\App\Http\Controllers\Auth\RegisteredUserController::registrationOpen())
+        Pas encore de compte ? <a href="{{ route('register') }}">Créer un compte</a>
+    @else
+        Pas de compte ? Demandez vos identifiants à un administrateur.
+    @endif
 @endsection

@@ -40,10 +40,12 @@
             <li><a class="dropdown-item" href="{{ route('sites.create') }}">
                 <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Connecter un site
             </a></li>
+
         </ul>
     </div>
 @else
     <a href="{{ route('sites.create') }}" class="btn btn-sm btn-primary">
         <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Connecter un site
     </a>
+
 @endif

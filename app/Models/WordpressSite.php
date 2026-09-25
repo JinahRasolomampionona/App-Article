@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -37,21 +38,178 @@ class WordpressSite extends Model
         'application_password',
     ];
 
+    /**
+     * Attributs portés par la connexion du compte (SiteConnection) et non par
+     * le site : chaque compte connecte le site avec ses propres identifiants.
+     *
+     * Ils restent lisibles et modifiables comme des attributs du site
+     * (`$site->wp_username`, `forceFill(['connection_status' => …])->save()`) :
+     * lecture et écriture sont redirigées vers la connexion active, enregistrée
+     * avec le site.
+     */
+    public const CONNECTION_ATTRIBUTES = [
+        'wp_username',
+        'application_password',
+        'wp_can_edit',
+        'wp_role',
+        'connection_status',
+        'connection_message',
+        'last_checked_at',
+    ];
+
+    /** Connexion utilisée pour les appels WordPress de cette instance. */
+    protected ?SiteConnection $activeConnection = null;
+
     protected function casts(): array
     {
         return [
-            // Chiffrement transparent par Laravel : la valeur en base est illisible.
-            'application_password' => 'encrypted',
-            'wp_can_edit' => 'boolean',
-            'last_checked_at' => 'datetime',
             'last_sync_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        // La connexion suit le site : créée avec lui pour son créateur, et
+        // enregistrée à chaque sauvegarde si elle a été modifiée.
+        static::saved(function (WordpressSite $site) {
+            $connection = $site->activeConnection;
+
+            if ($connection === null && $site->wasRecentlyCreated) {
+                $connection = $site->activeConnection = new SiteConnection;
+            }
+
+            if ($connection === null || ($connection->exists && ! $connection->isDirty())) {
+                return;
+            }
+
+            $connection->wordpress_site_id ??= $site->id;
+            $connection->user_id ??= $site->user_id;
+            $connection->save();
+        });
     }
 
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
+
+    public function connections(): HasMany
+    {
+        return $this->hasMany(SiteConnection::class);
+    }
+
+    /* --- Connexion active ------------------------------------------------------ */
+
+    /**
+     * Connexion utilisée pour parler à WordPress.
+     *
+     * Par ordre de préférence : celle explicitement choisie ; celle du compte
+     * connecté ; celle du créateur du site ; toute connexion valide. Un Admin
+     * qui consulte le site d'un agent sans l'avoir connecté lui-même passe donc
+     * par la connexion de cet agent.
+     */
+    public function connection(): SiteConnection
+    {
+        if ($this->activeConnection !== null) {
+            return $this->activeConnection;
+        }
+
+        if (! $this->exists) {
+            return $this->activeConnection = new SiteConnection;
+        }
+
+        $connections = $this->relationLoaded('connections') ? $this->connections : $this->connections()->get();
+        $userId = auth()->id();
+
+        $connection = ($userId ? $connections->firstWhere('user_id', $userId) : null)
+            ?? $connections->first(fn (SiteConnection $c) => $c->user_id === $this->user_id && $c->hasCredentials())
+            ?? $connections->first(fn (SiteConnection $c) => $c->connection_status === self::STATUS_CONNECTED && $c->hasCredentials())
+            ?? $connections->first(fn (SiteConnection $c) => $c->hasCredentials())
+            ?? $connections->first();
+
+        return $this->activeConnection = $connection ?? new SiteConnection([
+            'wordpress_site_id' => $this->id,
+            'user_id' => $userId ?? $this->user_id,
+        ]);
+    }
+
+    /** Force la connexion d'un compte donné (jobs en file, où personne n'est connecté). */
+    public function useConnectionOf(?int $userId): static
+    {
+        if ($userId !== null) {
+            $connection = $this->connections()->where('user_id', $userId)->first();
+
+            if ($connection !== null) {
+                $this->activeConnection = $connection;
+            }
+        }
+
+        return $this;
+    }
+
+    public function useConnection(SiteConnection $connection): static
+    {
+        $this->activeConnection = $connection;
+
+        return $this;
+    }
+
+    /** Connexion propre à un compte, s'il a connecté ce site. */
+    public function connectionOf(User $user): ?SiteConnection
+    {
+        return $this->connections()->where('user_id', $user->id)->first();
+    }
+
+    public function refresh()
+    {
+        $this->activeConnection = null;
+
+        return parent::refresh();
+    }
+
+    /**
+     * Sites accessibles à un compte : tous pour l'Admin, ceux qu'il a
+     * connectés pour un Agent.
+     *
+     * @param  Builder<WordpressSite>  $query
+     * @return Builder<WordpressSite>
+     */
+    public function scopeAccessibleBy(Builder $query, User $user): Builder
+    {
+        if ($user->isAdmin()) {
+            return $query;
+        }
+
+        return $query->whereHas('connections', fn (Builder $q) => $q->where('user_id', $user->id));
+    }
+
+    public function isAccessibleBy(User $user): bool
+    {
+        return $user->isAdmin() || $this->connections()->where('user_id', $user->id)->exists();
+    }
+
+    /* Attributs délégués à la connexion active (voir CONNECTION_ATTRIBUTES). */
+
+    public function getWpUsernameAttribute(): mixed { return $this->connection()->wp_username; }
+    public function setWpUsernameAttribute(mixed $value): void { $this->connection()->wp_username = $value; }
+
+    public function getApplicationPasswordAttribute(): mixed { return $this->connection()->application_password; }
+    public function setApplicationPasswordAttribute(mixed $value): void { $this->connection()->application_password = $value; }
+
+    public function getWpCanEditAttribute(): mixed { return $this->connection()->wp_can_edit; }
+    public function setWpCanEditAttribute(mixed $value): void { $this->connection()->wp_can_edit = $value; }
+
+    public function getWpRoleAttribute(): mixed { return $this->connection()->wp_role; }
+    public function setWpRoleAttribute(mixed $value): void { $this->connection()->wp_role = $value; }
+
+    public function getConnectionStatusAttribute(): mixed { return $this->connection()->connection_status; }
+    public function setConnectionStatusAttribute(mixed $value): void { $this->connection()->connection_status = $value; }
+
+    public function getConnectionMessageAttribute(): mixed { return $this->connection()->connection_message; }
+    public function setConnectionMessageAttribute(mixed $value): void { $this->connection()->connection_message = $value; }
+
+    public function getLastCheckedAtAttribute(): mixed { return $this->connection()->last_checked_at; }
+    public function setLastCheckedAtAttribute(mixed $value): void { $this->connection()->last_checked_at = $value; }
 
     public function articles(): HasMany
     {

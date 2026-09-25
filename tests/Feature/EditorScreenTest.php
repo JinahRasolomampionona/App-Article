@@ -91,7 +91,7 @@ class EditorScreenTest extends TestCase
 
     public function test_les_sections_de_la_sidebar_sont_repliables(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->admin()->create();
 
         $response = $this->actingAs($user)->get(route('dashboard'));
 
@@ -103,7 +103,7 @@ class EditorScreenTest extends TestCase
 
     public function test_la_sidebar_peut_etre_reduite_en_barre_d_icones(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->admin()->create();
 
         $response = $this->actingAs($user)->get(route('dashboard'));
 

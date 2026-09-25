@@ -2,7 +2,7 @@
 
 @section('title', 'Sites WordPress')
 @section('heading', 'Sites WordPress')
-@section('subheading', 'Connectez, testez et synchronisez vos sites.')
+@section('subheading', 'Vos sites connectés avec vos propres identifiants WordPress.')
 
 @section('breadcrumb')
     <a href="{{ route('dashboard') }}">Dashboard</a> <span class="mx-1">/</span>
@@ -17,7 +17,17 @@
 
 @section('content')
 <div id="ag-sites">
+    @if($otherSites->isNotEmpty())
+        <h2 class="h6 fw-semibold mb-2">Mes sites</h2>
+    @endif
+
+    {{-- Sites connectés par l'utilisateur : il gère sa propre connexion
+         (tester, synchroniser, modifier, supprimer). --}}
     @forelse($sites as $site)
+        @php
+            $others = $site->connections->where('user_id', '!=', auth()->id())->pluck('user.name')->filter();
+        @endphp
+
         <div class="ag-card mb-3" data-site-row
              data-status-url="{{ route('sites.sync-status', $site) }}">
             <div class="ag-card__body">
@@ -42,6 +52,17 @@
                            class="ag-mono ag-muted text-decoration-none d-inline-block mt-1">
                             {{ $site->url }} <i class="bi bi-box-arrow-up-right small" aria-hidden="true"></i>
                         </a>
+
+                        <p class="ag-hint mt-1 mb-0">
+                            <i class="bi bi-person me-1" aria-hidden="true"></i>
+                            Connecté avec votre compte WordPress
+                            @if($site->wp_username)
+                                « {{ $site->wp_username }} »
+                            @endif
+                            @if($others->isNotEmpty())
+                                · aussi connecté par {{ $others->join(', ', ' et ') }} (articles partagés)
+                            @endif
+                        </p>
 
                         @if($site->connection_message)
                             <p class="ag-hint mt-2 mb-0">{{ $site->connection_message }}</p>
@@ -117,7 +138,9 @@
                             Modifier
                         </a>
                         <form method="POST" action="{{ route('sites.destroy', $site) }}"
-                              data-confirm="Supprimer « {{ $site->name }} » et tous ses articles synchronisés ? Le site WordPress lui-même n'est pas modifié.">
+                              data-confirm="{{ $others->isNotEmpty()
+                                  ? 'Retirer « '.$site->name.' » de vos sites ? Il reste disponible pour '.$others->join(', ', ' et ').', avec ses articles.'
+                                  : 'Supprimer « '.$site->name.' » et tous ses articles synchronisés ? Le site WordPress lui-même n\'est pas modifié.' }}">
                             @csrf
                             @method('DELETE')
                             <button type="submit" class="btn btn-sm btn-outline-danger"
@@ -130,13 +153,13 @@
             </div>
         </div>
     @empty
-        <div class="ag-card">
+        <div class="ag-card mb-3">
             <div class="ag-empty">
                 <div class="ag-empty__icon"><i class="bi bi-globe2" aria-hidden="true"></i></div>
                 <p class="ag-empty__title">Aucun site connecté</p>
                 <p class="ag-empty__text">
-                    Indiquez l’adresse de votre site WordPress ainsi qu’un identifiant et une
-                    Application Password pour pouvoir auditer et corriger vos articles.
+                    Indiquez l’adresse de votre site WordPress ainsi que votre identifiant et votre
+                    Application Password pour pouvoir auditer et corriger ses articles.
                 </p>
                 <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">
                     <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Connecter un site
@@ -144,5 +167,56 @@
             </div>
         </div>
     @endforelse
+
+    {{-- Admin : sites connectés uniquement par les agents, pour suivre leur
+         travail. Leurs identifiants restent la propriété des agents. --}}
+    @if($otherSites->isNotEmpty())
+        <h2 class="h6 fw-semibold mt-4 mb-2">Sites connectés par les agents</h2>
+
+        <div class="ag-card">
+            <div class="table-responsive">
+                <table class="table ag-table align-middle">
+                    <thead>
+                        <tr>
+                            <th scope="col">Site</th>
+                            <th scope="col">Connecté par</th>
+                            <th scope="col" class="text-end">Articles</th>
+                            <th scope="col">Synchro</th>
+                            <th scope="col" class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach($otherSites as $site)
+                        <tr>
+                            <td>
+                                <span class="ag-table__title">{{ $site->name }}</span>
+                                <span class="ag-table__url">{{ $site->url }}</span>
+                            </td>
+                            <td>
+                                @forelse($site->connections as $connection)
+                                    <span class="ag-chip">{{ $connection->user?->name }}</span>
+                                @empty
+                                    <span class="ag-hint">—</span>
+                                @endforelse
+                            </td>
+                            <td class="text-end">{{ $site->articles_count }}</td>
+                            <td><span class="ag-hint">{{ $site->last_sync_at?->diffForHumans() ?? 'jamais' }}</span></td>
+                            <td class="text-end">
+                                <div class="d-inline-flex gap-1">
+                                    <button type="button" class="btn btn-sm btn-outline-primary"
+                                            data-sync-url="{{ route('sites.sync', $site) }}">
+                                        <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i> Synchroniser
+                                    </button>
+                                    <a href="{{ route('articles.index', ['site' => $site->id]) }}"
+                                       class="btn btn-sm btn-outline-secondary">Voir les articles</a>
+                                </div>
+                            </td>
+                        </tr>
+                    @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    @endif
 </div>
 @endsection

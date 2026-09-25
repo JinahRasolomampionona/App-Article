@@ -2,9 +2,12 @@
 
 namespace App\Providers;
 
+use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
+use App\Policies\UserPolicy;
 use App\Policies\WordpressArticlePolicy;
+use App\Support\AgentCatalog;
 use App\Policies\WordpressSitePolicy;
 use App\Services\Audit\AuditService;
 use App\Services\Audit\Relevance\HeuristicImageRelevanceAnalyzer;
@@ -79,6 +82,12 @@ class AppServiceProvider extends ServiceProvider
     {
         Gate::policy(WordpressSite::class, WordpressSitePolicy::class);
         Gate::policy(WordpressArticle::class, WordpressArticlePolicy::class);
+        Gate::policy(User::class, UserPolicy::class);
+
+        // Pages réservées à l'Admin : gestion des comptes, sites, paramètres.
+        Gate::define('admin', fn (User $user) => $user->isAdmin());
+
+        AgentCatalog::flush();
 
         // Le sélecteur de site et la sidebar sont présents sur toutes les pages
         // applicatives : leurs données sont résolues une seule fois par requête.

@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
 use App\Services\Stats\ArticleStatisticsService;
+use App\Services\Stats\StatisticsFilter;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -31,7 +32,7 @@ class ArticleStatisticsTest extends TestCase
 
         CarbonImmutable::setTestNow(CarbonImmutable::parse('2026-09-23 10:00:00'));
 
-        $this->user = User::factory()->create();
+        $this->user = User::factory()->admin()->create();
         $this->site = WordpressSite::factory()->for($this->user)->create([
             'name' => 'bijouteries.top',
             'url' => 'https://bijouteries.top',
@@ -54,7 +55,7 @@ class ArticleStatisticsTest extends TestCase
         $this->articles(60, WordpressArticle::AUDIT_FIXED);
         $this->articles(60, WordpressArticle::AUDIT_NEEDS_FIX);
 
-        $overview = $this->statistics->overview($this->user);
+        $overview = $this->statistics->overview(StatisticsFilter::forAdmin($this->user));
 
         $this->assertSame(460, $overview['articles']);
         $this->assertSame(400, $overview['corrected']);
@@ -69,7 +70,7 @@ class ArticleStatisticsTest extends TestCase
         $this->articles(4, WordpressArticle::AUDIT_OK);
         $this->articles(1, WordpressArticle::AUDIT_NEEDS_FIX);
 
-        $rows = $this->statistics->perSite($this->user);
+        $rows = $this->statistics->perSite(StatisticsFilter::forAdmin($this->user));
 
         $this->assertCount(1, $rows);
         $this->assertSame('bijouteries.top', $rows[0]['name']);
@@ -79,9 +80,9 @@ class ArticleStatisticsTest extends TestCase
         $this->assertSame(80, $rows[0]['rate']);
     }
 
-    public function test_les_articles_d_un_autre_utilisateur_sont_exclus(): void
+    public function test_l_espace_partage_compte_tous_les_sites_et_se_filtre_par_site(): void
     {
-        $other = User::factory()->create();
+        $other = User::factory()->admin()->create();
         $otherSite = WordpressSite::factory()->for($other)->create(['url' => 'https://ailleurs.test']);
         WordpressArticle::factory()->count(3)->for($otherSite, 'site')->create([
             'audit_status' => WordpressArticle::AUDIT_OK,
@@ -89,7 +90,10 @@ class ArticleStatisticsTest extends TestCase
 
         $this->articles(2, WordpressArticle::AUDIT_OK);
 
-        $this->assertSame(2, $this->statistics->overview($this->user)['articles']);
+        $filter = StatisticsFilter::forAdmin($this->user);
+
+        $this->assertSame(5, $this->statistics->overview($filter)['articles']);
+        $this->assertSame(2, $this->statistics->overview($filter->withSite($this->site->id))['articles']);
     }
 
     /* --- Détection des corrections ------------------------------------------- */
@@ -168,14 +172,14 @@ class ArticleStatisticsTest extends TestCase
 
         $this->site->delete();
 
-        $archived = $this->statistics->archivedSites($this->user);
+        $archived = $this->statistics->archivedSites(StatisticsFilter::forAdmin($this->user));
 
         $this->assertCount(1, $archived);
         $this->assertSame('bijouteries.top', $archived[0]['name']);
         $this->assertSame(1, $archived[0]['corrected']);
         $this->assertTrue($archived[0]['archived']);
         // Le site n'a plus d'état courant.
-        $this->assertSame([], $this->statistics->perSite($this->user));
+        $this->assertSame([], $this->statistics->perSite(StatisticsFilter::forAdmin($this->user)));
     }
 
     public function test_la_suppression_du_compte_efface_bien_l_historique(): void

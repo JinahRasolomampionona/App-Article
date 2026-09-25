@@ -6,6 +6,7 @@ import { createImageDetails } from './image-details.js';
 import { sanitizeHtml } from './sanitize-html.js';
 import { fileNameOf, safeUrl, sameUrl } from './url.js';
 import { blockLabel, createBlockIndicator, createLinkPopover, createOutline, currentBlock } from './editor-structure.js';
+import { initArticleLock } from './article-lock.js';
 
 /**
  * Éditeur d'article.
@@ -688,22 +689,8 @@ export function initEditor() {
 
     /* --- Enregistrement ------------------------------------------------------ */
 
-    form?.addEventListener('submit', async (event) => {
-        event.preventDefault();
-
-        const button = form.querySelector('[data-save]');
-        const done = busy(button, 'Envoi à WordPress…');
-
-        // Un site lent peut mettre plus d'une minute à enregistrer : on le dit,
-        // pour que l'attente ne passe pas pour un blocage.
-        const slowNotice = setTimeout(() => {
-            const label = button?.lastChild;
-            if (label?.nodeType === Node.TEXT_NODE) {
-                label.textContent = 'WordPress répond lentement, patientez…';
-            }
-        }, 10000);
-
-        const payload = {
+    function currentPayload() {
+        return {
             title: titleInput.value,
             content: currentHtml(),
             slug: slugInput?.value ?? null,
@@ -715,6 +702,33 @@ export function initEditor() {
                 Number(input.value),
             ),
         };
+    }
+
+    // Dernière version enregistrée : sert à savoir s'il reste des
+    // modifications à envoyer avant de terminer ou de libérer l'article.
+    let savedSnapshot = null;
+
+    function isDirty() {
+        return savedSnapshot !== null && JSON.stringify(currentPayload()) !== savedSnapshot;
+    }
+
+    /**
+     * Envoie l'article à WordPress. Renvoie `true` si l'enregistrement a
+     * réussi, pour que « Terminer la correction » puisse enchaîner.
+     */
+    async function save(button = form.querySelector('[data-save]')) {
+        const done = busy(button, 'Envoi à WordPress…');
+
+        // Un site lent peut mettre plus d'une minute à enregistrer : on le dit,
+        // pour que l'attente ne passe pas pour un blocage.
+        const slowNotice = setTimeout(() => {
+            const label = button?.lastChild;
+            if (label?.nodeType === Node.TEXT_NODE) {
+                label.textContent = 'WordPress répond lentement, patientez…';
+            }
+        }, 10000);
+
+        const payload = currentPayload();
 
         try {
             const data = await http.put(form.dataset.url, payload);
@@ -724,15 +738,58 @@ export function initEditor() {
             // Le contenu renvoyé par WordPress devient la nouvelle référence.
             source.value = payload.content;
             visualDirty = false;
+            savedSnapshot = JSON.stringify(currentPayload());
 
             updateAuditPanel(data.audit);
+
+            return true;
         } catch (error) {
-            notify.error(error.message);
+            // Refus du serveur : l'article n'est plus à nous (verrou expiré ou
+            // repris). Le module de prise en charge bascule en consultation.
+            if (error.status === 409) {
+                document.dispatchEvent(new CustomEvent('ag:lock-lost', { detail: error.message }));
+            } else {
+                notify.error(error.message);
+            }
+
+            return false;
         } finally {
             clearTimeout(slowNotice);
             done();
         }
+    }
+
+    form?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        if (form.dataset.readonly === '1') return;
+
+        await save();
     });
+
+    /**
+     * Consultation seule : l'article est pris par quelqu'un d'autre, ou le
+     * verrou vient d'être perdu. Le serveur refuserait de toute façon toute
+     * écriture ; l'interface le montre plutôt que de laisser saisir en vain.
+     */
+    function setReadOnly() {
+        form.dataset.readonly = '1';
+        surface.setAttribute('contenteditable', 'false');
+        surface.classList.add('is-readonly');
+
+        form.querySelectorAll('input, select, textarea, button').forEach((element) => {
+            if (element.closest('[data-keep-enabled]') || element.id === 'ag-run-audit') return;
+            if (element.matches('[data-editor-tab], [data-outline-toggle]')) return;
+
+            element.disabled = true;
+        });
+
+        root.querySelectorAll('.ag-editor__tool, [data-editor-block]').forEach((element) => {
+            element.disabled = true;
+        });
+
+        form.querySelector('[data-save]')?.setAttribute('hidden', '');
+    }
 
     /* --- Audit manuel -------------------------------------------------------- */
 
@@ -776,6 +833,14 @@ export function initEditor() {
     renderVisual();
     refreshImagesList();
     outline?.update(currentHtml());
+
+    savedSnapshot = JSON.stringify(currentPayload());
+
+    if (form.dataset.readonly === '1') {
+        setReadOnly();
+    }
+
+    initArticleLock({ isDirty, save, setReadOnly });
 }
 
 function scrollAndFlash(element) {

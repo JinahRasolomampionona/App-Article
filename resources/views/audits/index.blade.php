@@ -26,6 +26,7 @@
             <p class="ag-empty__title">Aucun site sélectionné</p>
             <p class="ag-empty__text">Connectez un site WordPress pour lancer des audits de contenu.</p>
             <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">Connecter un site</a>
+
         </div>
     </div>
 @else

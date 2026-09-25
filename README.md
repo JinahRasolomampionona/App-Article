@@ -20,6 +20,7 @@ modifications étant renvoyées à WordPress.
 - [File d'attente](#file-dattente)
 - [Connecter un site WordPress](#connecter-un-site-wordpress)
 - [Règles d'audit](#règles-daudit)
+- [Agents et prise en charge](#agents-et-prise-en-charge-des-articles)
 - [Statistiques](#statistiques)
 - [Analyse des images](#analyse-des-images)
 - [Sécurité](#sécurité)
@@ -171,7 +172,8 @@ php artisan serve          # http://127.0.0.1:8000
 npm run dev                # rechargement des assets pendant le développement
 ```
 
-Créer un compte sur `/register`, puis connecter un site depuis `/sites/create`.
+Créer le premier compte (Admin) sur `/register`, connecter un site depuis `/sites/create`,
+puis créer les comptes des agents depuis `/agents` (ou `php artisan db:seed`).
 
 ---
 
@@ -251,10 +253,91 @@ shortcodes et images manquantes, quitte à relancer ensuite un audit complet.
 
 ---
 
+## Agents et prise en charge des articles
+
+ArticleGuard est un **espace de travail partagé** : tous les comptes voient les
+mêmes sites et les mêmes articles. Deux rôles :
+
+| Rôle | Peut |
+|---|---|
+| **Admin** | connecter ses propres sites (Tester, Synchroniser, Modifier, Supprimer) ; voir tous les sites, y compris ceux des agents, et le travail de chacun ; créer, modifier, désactiver les comptes (`/agents`) ; attribuer ou libérer n'importe quel article ; statistiques globales filtrables par site, agent, date et statut ; paramètres d'audit |
+| **Agent** | connecter ses propres sites avec ses identifiants WordPress (Tester, Synchroniser, Modifier, Supprimer) ; sur ses sites : voir les articles disponibles et ceux en cours chez les autres ; **prendre** un article ; modifier uniquement l'article qu'il détient ; le **libérer** ; **terminer** une correction ; consulter uniquement ses propres statistiques |
+
+### Sites et connexions
+
+Chaque compte connecte ses sites avec **ses propres identifiants WordPress**
+(table `site_connections`) et ne voit que ses sites ; l'Admin voit tous les
+sites. Un même site connecté par plusieurs comptes n'existe qu'une fois : ses
+articles, verrous, audits et statistiques sont partagés. C'est ce lien qui
+permet à l'Admin, sur `bijouteries.top`, de voir quel agent traite quel
+article et ce qui est corrigé ou à corriger.
+
+- Tester, Modifier, Supprimer agissent sur la connexion du compte seulement ;
+  supprimer ne retire le site et ses articles que si plus personne ne l'a
+  connecté.
+- Le nom et l'adresse d'un site partagé sont communs : ils ne se modifient
+  que si l'on est seul à l'avoir connecté (l'Admin peut toujours renommer).
+- Un article ne peut être attribué qu'à un agent ayant connecté son site.
+
+Toutes ces règles sont contrôlées côté Laravel (policies, porte `admin`,
+`StatisticsFilter`) : une URL ou une requête AJAX forgée est refusée.
+
+### Verrou d'édition
+
+- Prendre un article pose un verrou (`assigned_to`, `locked_at`,
+  `lock_expires_at`). Un seul agent actif par article : la prise est une
+  transaction avec `SELECT … FOR UPDATE` suivie d'une écriture conditionnelle —
+  si deux agents cliquent en même temps, le second reçoit
+  « Cet article est actuellement traité par Daniella. » (HTTP 409).
+- Le verrou expire après `AG_LOCK_TTL_MINUTES` (30 min) ; l'éditeur le prolonge
+  par un heartbeat (`AG_LOCK_HEARTBEAT_SECONDS`). Un verrou expiré est
+  considéré comme libre partout, sans attendre de tâche planifiée.
+- La page Articles rafraîchit l'état des lignes affichées toutes les
+  `AG_LOCK_POLL_SECONDS` secondes (seules les cellules Agent/Actions changent).
+- **Terminer la correction** : enregistre les modifications sur WordPress,
+  relance un audit complet, enregistre l'activité, crédite l'agent dans les
+  statistiques et libère l'article. Le statut « Corrigé » découle de l'audit,
+  jamais du clic.
+
+Statut d'audit (*À corriger / Corrigé / OK*) et statut de traitement
+(*Disponible / En cours par…*) sont deux notions distinctes.
+
+L'historique des prises en charge est dans `article_assignments` (agent, prise,
+libération, motif, correction, résultat d'audit).
+
+### Tâche planifiée
+
+```bash
+php artisan schedule:work   # en développement
+# en production : * * * * * php artisan schedule:run
+```
+
+`articles:release-expired` clôt chaque minute les prises en charge expirées
+(historique exact). La disponibilité des articles n'en dépend pas.
+
+### Comptes
+
+- Le **premier compte** inscrit sur `/register` devient Admin ; l'inscription
+  publique est ensuite fermée (sauf `AG_OPEN_REGISTRATION=true`, qui crée des
+  Agents). L'Admin crée les comptes depuis **Configuration → Agents**.
+- `php artisan db:seed` crée un Admin (`admin@articleguard.test`) et les agents
+  de `AG_AGENTS` (Daniella, Jinah, Koloina, Niriantsoa, Miranto) avec le mot de
+  passe `AG_SEED_PASSWORD`. À changer après la première connexion.
+- Créer un compte dont le nom correspond à des corrections déjà saisies sous ce
+  nom les lui rattache.
+- Désactiver un compte coupe sa session et libère ses articles. Supprimer un
+  compte transfère ses sites à l'Admin : rien n'est perdu.
+
+---
+
 ## Statistiques
 
-La page **Statistiques** (menu latéral, au-dessus de *Paramètres*) présente :
+La page **Statistiques** présente, pour l'**Admin** (un **Agent** n'y voit que ses
+propres chiffres — corrigés, en cours, à corriger, semaine, mois, dernière
+activité) :
 
+- l'activité **par agent** : corrections, articles en cours, dernière activité ;
+- les **articles en cours** et l'agent qui les traite ;
 - l'état courant de tous les sites : total d'articles, part **OK / Corrigés**,
   et articles **non corrigés** ;
 - le détail par site, avec sa date de dernière correction ;
@@ -266,8 +349,8 @@ La page **Statistiques** (menu latéral, au-dessus de *Paramètres*) présente :
 L'historique vit dans `article_status_history`, distincte des articles. Le nom
 du site et le titre de l'article y sont recopiés à l'enregistrement : **supprimer
 un site ne supprime pas ses statistiques**, ses lignes restent consultables et
-le site apparaît comme *archivé*. Supprimer le compte utilisateur, en revanche,
-efface bien l'historique.
+le site apparaît comme *archivé*. Supprimer un compte depuis la page Agents
+transfère ses sites et son historique à l'Admin.
 
 Une entrée est créée uniquement lors d'un *changement* de statut : réauditer un
 article déjà conforme ne gonfle pas les compteurs. Les corrections déclarées à

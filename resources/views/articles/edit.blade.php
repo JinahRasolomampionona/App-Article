@@ -24,7 +24,7 @@
 @unless($site->hasCredentials())
     <div class="alert alert-warning py-2 px-3 small" role="alert">
         Ce site est connecté en lecture seule. Ajoutez un identifiant WordPress et une
-        Application Password dans <a href="{{ route('sites.edit', $site) }}">les paramètres du site</a>
+        Application Password dans @can('update', $site) <a href="{{ route('sites.edit', $site) }}">les paramètres du site</a> @else les paramètres du site (réservé à la personne qui l’a connecté ou à l’Admin) @endcan
         pour pouvoir enregistrer vos modifications.
     </div>
 @elseif($site->isReadOnlyAccount())
@@ -35,11 +35,12 @@
         @if($site->wp_role) (rôle « {{ $site->wp_role }} ») @endif
         n’a pas le droit de modifier les articles de ce site : WordPress refusera l’enregistrement.
         Utilisez un compte ayant au minimum le rôle « Auteur » dans
-        <a href="{{ route('sites.edit', $site) }}">les paramètres du site</a>.
+        @can('update', $site) <a href="{{ route('sites.edit', $site) }}">les paramètres du site</a> @else les paramètres du site (réservé à la personne qui l’a connecté ou à l’Admin) @endcan.
     </div>
 @endunless
 
-<form id="ag-article-form" data-url="{{ route('articles.update', $article) }}" novalidate>
+<form id="ag-article-form" data-url="{{ route('articles.update', $article) }}"
+      data-readonly="{{ $canEdit ? '0' : '1' }}" novalidate>
     @csrf
     @method('PUT')
 
@@ -160,6 +161,9 @@
 
         {{-- Colonne latérale --}}
         <div class="col-lg-4">
+            {{-- Prise en charge : qui travaille sur l'article. --}}
+            @include('articles.partials.lock-panel')
+
             {{-- Audit --}}
             <div class="ag-card mb-3">
                 <div class="ag-card__header">
@@ -199,10 +203,17 @@
                     </dl>
                 </div>
                 <div class="ag-card__body border-top d-grid gap-2">
-                    <button type="submit" class="btn btn-primary" data-save
-                            @disabled(! $site->hasCredentials())>
-                        <i class="bi bi-cloud-arrow-up me-1" aria-hidden="true"></i> Mettre à jour
-                    </button>
+                    @if($canEdit)
+                        <button type="submit" class="btn btn-primary" data-save
+                                @disabled(! $site->hasCredentials())>
+                            <i class="bi bi-cloud-arrow-up me-1" aria-hidden="true"></i> Mettre à jour
+                        </button>
+                    @else
+                        <p class="ag-hint mb-0 text-center">
+                            <i class="bi bi-lock me-1" aria-hidden="true"></i>
+                            Consultation seule : prenez l’article pour le modifier.
+                        </p>
+                    @endif
                 </div>
             </div>
 

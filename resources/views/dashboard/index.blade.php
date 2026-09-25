@@ -13,9 +13,9 @@
         <a href="{{ route('articles.index') }}" class="btn btn-sm btn-outline-secondary">
             <i class="bi bi-file-text me-1" aria-hidden="true"></i> Voir les articles
         </a>
-        <a href="{{ route('sites.index') }}" class="btn btn-sm btn-primary">
+        <button type="button" class="btn btn-sm btn-primary" data-sync-url="{{ route('sites.sync', $site) }}" id="ag-sync-current">
             <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i> Synchroniser
-        </a>
+        </button>
     @endif
 @endsection
 
@@ -32,6 +32,7 @@
                 <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">
                     <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Connecter un site WordPress
                 </a>
+
             </div>
         </div>
     @else
