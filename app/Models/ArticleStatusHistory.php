@@ -77,7 +77,7 @@ class ArticleStatusHistory extends Model
     public function statusLabel(): string
     {
         return match ($this->status) {
-            WordpressArticle::AUDIT_FIXED => $this->resolved_manually ? 'Corrigé manuellement' : 'Corrigé',
+            WordpressArticle::AUDIT_FIXED => 'Corrigé',
             default => 'OK',
         };
     }

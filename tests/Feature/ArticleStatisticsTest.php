@@ -275,7 +275,8 @@ class ArticleStatisticsTest extends TestCase
             ->assertSee('Historique des corrections', false)
             ->assertSee('bijouteries.top', false)
             ->assertSee('Choisir un collier', false)
-            ->assertSee('Corrigé manuellement', false)
+            ->assertSee('Corrigé', false)
+            ->assertDontSee('Corrigé manuellement', false)
             ->assertSee('23/09/2026', false);
     }
 

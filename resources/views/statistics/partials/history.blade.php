@@ -25,8 +25,7 @@
             @endif
             {{ number_format($historyTotals['total'], 0, ',', ' ') }} entrée(s) sur
             {{ $historyTotals['sites'] }} site(s) ·
-            {{ $historyTotals['ok'] }} OK · {{ $historyTotals['fixed'] }} corrigé(s),
-            dont {{ $historyTotals['manual'] }} déclaré(s) manuellement.
+            {{ $historyTotals['ok'] }} OK · {{ $historyTotals['fixed'] }} corrigé(s).
         </p>
     </div>
 
