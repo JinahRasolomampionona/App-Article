@@ -2,13 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\ArticleStatusHistory;
 use App\Models\User;
 use App\Models\WordpressSite;
 use App\Services\Stats\ArticleStatisticsService;
 use App\Services\Stats\CorrectionStatsService;
 use App\Services\Stats\StatisticsFilter;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\View\View;
 
 /**
@@ -81,6 +84,24 @@ class StatisticsController extends Controller
      * Espace personnel d'un agent : ses chiffres, ses articles, son
      * historique — rien d'autre n'est calculé ni envoyé au navigateur.
      */
+    /**
+     * Admin : efface l'historique des sites supprimés (lignes « Site
+     * supprimé » du bloc « Par site »). Les sites connectés ne sont pas
+     * touchés.
+     */
+    public function purgeArchivedSites(Request $request): RedirectResponse
+    {
+        $deleted = ArticleStatusHistory::query()->whereNull('wordpress_site_id')->delete();
+
+        Log::info('Historique des sites supprimés effacé.', ['rows' => $deleted, 'by' => $request->user()->id]);
+
+        return redirect()
+            ->route('statistics.index')
+            ->with('status', $deleted > 0
+                ? 'Sites supprimés retirés des statistiques.'
+                : 'Aucun site supprimé à retirer.');
+    }
+
     protected function agentView(StatisticsFilter $filter, string $granularity): View
     {
         return view('statistics.agent', [

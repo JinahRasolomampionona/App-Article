@@ -9,6 +9,17 @@
         <span class="ag-hint ms-auto">
             {{ count($sites) }} connecté(s)@if(count($archivedSites)) · {{ count($archivedSites) }} archivé(s)@endif
         </span>
+
+        @if(count($archivedSites))
+            <form method="POST" action="{{ route('statistics.purge-archived') }}" class="ms-2"
+                  data-confirm="Retirer définitivement les {{ count($archivedSites) }} site(s) supprimé(s) et leurs corrections des statistiques ?">
+                @csrf
+                @method('DELETE')
+                <button type="submit" class="btn btn-sm btn-outline-danger">
+                    <i class="bi bi-trash me-1" aria-hidden="true"></i> Supprimer les sites supprimés
+                </button>
+            </form>
+        @endif
     </div>
 
     <div class="table-responsive">

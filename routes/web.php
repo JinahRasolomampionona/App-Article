@@ -105,6 +105,9 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('/sites/{site}/agents/{user}/status', [SiteController::class, 'assignmentStatus'])
             ->name('sites.assignment-status');
 
+        Route::delete('/statistics/archived-sites', [StatisticsController::class, 'purgeArchivedSites'])
+            ->name('statistics.purge-archived');
+
         Route::get('/agents', [AgentController::class, 'index'])->name('agents.index');
         Route::get('/agents/create', [AgentController::class, 'create'])->name('agents.create');
         Route::post('/agents', [AgentController::class, 'store'])->name('agents.store');

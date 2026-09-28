@@ -520,6 +520,51 @@ class RolesAndAgentsTest extends TestCase
         $this->assertSame(2, $this->actingAs($this->jinah)->get(route('statistics.index'))->viewData('me')['corrected']);
     }
 
+    public function test_l_admin_retire_les_sites_supprimes_des_statistiques(): void
+    {
+        $this->correction($this->jinah, 'Article du site connecté');
+        ArticleStatusHistory::create([
+            'user_id' => $this->admin->id,
+            'wordpress_site_id' => null,
+            'site_name' => 'ancien-site.fr',
+            'status' => WordpressArticle::AUDIT_FIXED,
+            'recorded_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin)->get(route('statistics.index'))
+            ->assertSee('ancien-site.fr')
+            ->assertSee('Supprimer les sites supprimés');
+
+        // Un agent ne peut pas le faire, même en appelant la route.
+        $this->actingAs($this->jinah)->delete(route('statistics.purge-archived'))->assertForbidden();
+        $this->assertSame(2, ArticleStatusHistory::count());
+
+        $this->actingAs($this->admin)->delete(route('statistics.purge-archived'))->assertRedirect(route('statistics.index'));
+
+        $this->assertSame(1, ArticleStatusHistory::count());
+        $this->actingAs($this->admin)->get(route('statistics.index'))
+            ->assertDontSee('ancien-site.fr')
+            ->assertDontSee('Supprimer les sites supprimés');
+    }
+
+    public function test_la_commande_remet_toutes_les_statistiques_a_zero(): void
+    {
+        $this->assignSite($this->jinah, $this->site);
+        $this->correction($this->jinah, 'Article de Jinah');
+        $this->lockFor(WordpressArticle::factory()->for($this->site, 'site')->create([
+            'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,
+        ]), $this->jinah);
+
+        $this->artisan('stats:reset', ['--force' => true])->assertSuccessful();
+
+        $this->assertSame(0, ArticleStatusHistory::count());
+        $this->assertSame(0, WordpressArticle::query()->whereNotNull('assigned_to')->count());
+
+        $me = $this->actingAs($this->jinah)->get(route('statistics.index'))->viewData('me');
+        $this->assertSame(0, $me['corrected']);
+        $this->assertSame(0, $me['in_progress']);
+    }
+
     public function test_l_agent_peut_annuler_sa_declaration_tant_qu_il_detient_l_article(): void
     {
         $this->assignSite($this->jinah, $this->site);
