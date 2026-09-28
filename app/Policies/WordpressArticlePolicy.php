@@ -7,8 +7,8 @@ use App\Models\WordpressArticle;
 use Illuminate\Auth\Access\Response;
 
 /**
- * Un article est visible par les comptes qui ont accès à son site (ceux qui
- * l'ont connecté, et l'Admin). Seul celui qui détient le verrou d'un article
+ * Un article est visible par les comptes qui ont accès à son site (les agents
+ * à qui l'Admin l'a assigné, et l'Admin). Seul celui qui détient le verrou d'un article
  * peut le modifier — Admin compris, pour que deux personnes ne modifient
  * jamais le même article en même temps.
  *
@@ -25,7 +25,7 @@ class WordpressArticlePolicy
     public function update(User $user, WordpressArticle $article): Response
     {
         if (! $this->canAccessSite($user, $article)) {
-            return Response::deny('Ce site ne fait pas partie de vos sites connectés.');
+            return Response::deny('Ce site ne vous est pas assigné.');
         }
 
         if ($article->isLockedBy($user)) {
@@ -47,7 +47,7 @@ class WordpressArticlePolicy
     public function setStatus(User $user, WordpressArticle $article): Response
     {
         if (! $this->canAccessSite($user, $article)) {
-            return Response::deny('Ce site ne fait pas partie de vos sites connectés.');
+            return Response::deny('Ce site ne vous est pas assigné.');
         }
 
         return $article->isLockedByOther($user)
@@ -65,7 +65,7 @@ class WordpressArticlePolicy
     public function take(User $user, WordpressArticle $article): Response
     {
         if (! $this->canAccessSite($user, $article)) {
-            return Response::deny('Ce site ne fait pas partie de vos sites connectés.');
+            return Response::deny('Ce site ne vous est pas assigné.');
         }
 
         return $article->isLockedByOther($user)

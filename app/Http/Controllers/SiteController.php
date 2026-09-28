@@ -5,8 +5,12 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreSiteRequest;
 use App\Http\Requests\UpdateSiteRequest;
 use App\Jobs\SynchronizeSiteJob;
-use App\Models\SiteConnection;
+use App\Models\ArticleStatusHistory;
+use App\Models\SiteAgentAssignment;
+use App\Models\User;
+use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
+use App\Services\Assignment\ArticleLockService;
 use App\Services\QueueHealth;
 use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
@@ -15,15 +19,17 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 /**
  * Sites WordPress.
  *
- * Chaque compte — Admin ou Agent — connecte ses propres sites avec ses
- * propres identifiants et gère sa connexion (tester, synchroniser, modifier,
- * supprimer). Un même site connecté par plusieurs comptes partage ses
- * articles : c'est ce qui permet à l'Admin de suivre le travail des agents.
+ * L'Admin connecte les sites (identifiants dans `site_credentials`), les
+ * teste, les modifie, les supprime et les assigne aux agents. Un site
+ * assigné apparaît aussitôt dans l'espace de chaque agent concerné, qui peut
+ * le synchroniser et en corriger les articles — sans rien connecter lui-même.
  */
 class SiteController extends Controller
 {
@@ -40,27 +46,20 @@ class SiteController extends Controller
 
         $user = $request->user();
 
-        // Les sites de l'utilisateur : ceux qu'il a lui-même connectés.
         $sites = WordpressSite::query()
-            ->whereHas('connections', fn ($query) => $query->where('user_id', $user->id))
-            ->with(['connections.user:id,name'])
+            ->accessibleBy($user)
+            ->with(['siteCredential', 'agentAssignments.user:id,name,is_active'])
             ->withCount(['articles', 'categories'])
             ->orderBy('name')
             ->get();
 
-        // L'Admin suit aussi les sites connectés uniquement par les agents.
-        $otherSites = $user->isAdmin()
-            ? WordpressSite::query()
-                ->whereDoesntHave('connections', fn ($query) => $query->where('user_id', $user->id))
-                ->with(['connections.user:id,name'])
-                ->withCount(['articles', 'categories'])
-                ->orderBy('name')
-                ->get()
-            : collect();
-
         return view('sites.index', [
             'sites' => $sites,
-            'otherSites' => $otherSites,
+            'agents' => $user->isAdmin()
+                ? User::query()->agents()->orderBy('name')->get(['id', 'name', 'is_active'])
+                : collect(),
+            // Travail de chaque agent par site, pour le suivi de l'Admin.
+            'agentActivity' => $user->isAdmin() ? $this->agentActivity($sites->pluck('id')->all()) : [],
             // Sans worker, un « en cours » resterait affiché indéfiniment :
             // la vue doit pouvoir dire que rien n'avance.
             'queueStalled' => $this->queue->needsManualWorker(),
@@ -74,46 +73,22 @@ class SiteController extends Controller
         return view('sites.create');
     }
 
-    /**
-     * Connecte un site pour l'utilisateur.
-     *
-     * Si un autre compte l'a déjà connecté, le site existant est rejoint :
-     * l'utilisateur y ajoute sa propre connexion et travaille sur les mêmes
-     * articles, avec ses propres identifiants.
-     */
     public function store(StoreSiteRequest $request): RedirectResponse
     {
-        $this->authorize('create', WordpressSite::class);
+        $site = new WordpressSite([
+            'name' => $request->validated('name'),
+            'url' => $request->normalizedUrl(),
+            'wp_username' => $request->validated('wp_username'),
+        ]);
 
-        $user = $request->user();
-        $existing = $request->existingSite();
+        if (filled($request->validated('application_password'))) {
+            $site->application_password = WordpressSite::normalizeApplicationPassword(
+                $request->validated('application_password')
+            );
+        }
 
-        $site = DB::transaction(function () use ($request, $user, $existing) {
-            if ($existing !== null) {
-                $site = $existing->useConnection(new SiteConnection([
-                    'wordpress_site_id' => $existing->id,
-                    'user_id' => $user->id,
-                ]));
-            } else {
-                $site = new WordpressSite([
-                    'name' => $request->validated('name'),
-                    'url' => $request->normalizedUrl(),
-                ]);
-                $site->user_id = $user->id;
-            }
-
-            $site->wp_username = $request->validated('wp_username');
-
-            if (filled($request->validated('application_password'))) {
-                $site->application_password = WordpressSite::normalizeApplicationPassword(
-                    $request->validated('application_password')
-                );
-            }
-
-            $site->save();
-
-            return $site;
-        });
+        $site->user_id = $request->user()->id;
+        $site->save();
 
         $this->context->refresh();
         $this->context->remember($site);
@@ -125,14 +100,12 @@ class SiteController extends Controller
             // doit refléter qu'un travail est en attente, worker ou non.
             $site->forceFill(['sync_status' => 'queued', 'sync_message' => null])->save();
 
-            SynchronizeSiteJob::dispatch($site, true, $user->id);
+            SynchronizeSiteJob::dispatch($site);
             $this->worker->ensureRunning();
 
             return redirect()
                 ->route('sites.index')
-                ->with('status', $existing
-                    ? 'Site connecté avec vos identifiants. Vous partagez ses articles avec les autres comptes qui l’ont connecté.'
-                    : 'Site connecté. La synchronisation initiale est en cours.');
+                ->with('status', 'Site connecté. La synchronisation initiale est en cours ; vous pouvez l’assigner à vos agents.');
         }
 
         return redirect()
@@ -140,33 +113,20 @@ class SiteController extends Controller
             ->with('error', $result['message']);
     }
 
-    public function edit(Request $request, WordpressSite $site): View
+    public function edit(WordpressSite $site): View
     {
         $this->authorize('update', $site);
 
-        return view('sites.edit', [
-            'site' => $site,
-            'sharedWith' => $site->connections()
-                ->where('user_id', '!=', $request->user()->id)
-                ->with('user:id,name')
-                ->get(),
-        ]);
+        return view('sites.edit', ['site' => $site]);
     }
 
     public function update(UpdateSiteRequest $request, WordpressSite $site): RedirectResponse
     {
-        // Le site est partagé : son nom et son adresse ne changent pas sous
-        // les pieds des autres comptes qui l'ont connecté. Les identifiants,
-        // eux, n'appartiennent qu'à l'utilisateur.
-        if ($request->canRenameSite()) {
-            $site->name = $request->validated('name');
-        }
-
-        if ($request->canChangeUrl()) {
-            $site->url = $request->normalizedUrl();
-        }
-
-        $site->wp_username = $request->validated('wp_username');
+        $site->fill([
+            'name' => $request->validated('name'),
+            'url' => $request->normalizedUrl(),
+            'wp_username' => $request->validated('wp_username'),
+        ]);
 
         // Champ laissé vide : on conserve le secret déjà enregistré.
         if (filled($request->validated('application_password'))) {
@@ -185,40 +145,147 @@ class SiteController extends Controller
             ->with('status', 'Site mis à jour.');
     }
 
-    /**
-     * Supprime la connexion de l'utilisateur. Le site et ses articles ne
-     * disparaissent que si plus personne ne l'a connecté : le travail des
-     * autres comptes n'est jamais effacé.
-     */
-    public function destroy(Request $request, WordpressSite $site): RedirectResponse
+    public function destroy(WordpressSite $site): RedirectResponse
     {
         $this->authorize('delete', $site);
 
-        $siteDeleted = DB::transaction(function () use ($request, $site) {
-            $site->connections()->where('user_id', $request->user()->id)->delete();
-
-            if ($site->connections()->exists()) {
-                return false;
-            }
-
-            $site->delete();
-
-            return true;
-        });
-
+        $site->delete();
         $this->context->forget();
         $this->context->refresh();
 
         return redirect()
             ->route('sites.index')
-            ->with('status', $siteDeleted
-                ? 'Site supprimé ainsi que ses articles synchronisés.'
-                : 'Site retiré de vos sites. Il reste disponible pour les autres comptes qui l’ont connecté.');
+            ->with('status', 'Site supprimé ainsi que ses articles synchronisés et ses assignations.');
     }
 
     /**
-     * Test de connexion en AJAX depuis la liste des sites : ce sont les
-     * identifiants de l'utilisateur qui sont testés.
+     * Assigne le site aux agents cochés. Un nouvel agent démarre « En cours » ;
+     * un agent décoché perd l'accès au site et ses articles en cours sont
+     * libérés.
+     */
+    public function assign(Request $request, WordpressSite $site, ArticleLockService $locks): RedirectResponse
+    {
+        $this->authorize('assign', $site);
+
+        $validated = $request->validate([
+            'agents' => ['nullable', 'array'],
+            'agents.*' => ['integer', Rule::exists('users', 'id')->where('role', User::ROLE_AGENT)],
+        ], [
+            'agents.*.exists' => 'Agent inconnu.',
+        ]);
+
+        $wanted = collect($validated['agents'] ?? [])->map(fn ($id) => (int) $id)->unique();
+        $admin = $request->user();
+
+        [$added, $removed] = DB::transaction(function () use ($site, $wanted, $admin, $locks) {
+            // Seuls les agents « En cours » sont cochés : un agent « Terminé »
+            // coché de nouveau est réassigné (nouvelle modif à faire).
+            $current = $site->agentAssignments()
+                ->where('status', SiteAgentAssignment::STATUS_IN_PROGRESS)
+                ->pluck('user_id')
+                ->map(fn ($id) => (int) $id);
+
+            $added = $wanted->diff($current);
+            $removed = $current->diff($wanted);
+
+            foreach ($added as $userId) {
+                $site->agentAssignments()->updateOrCreate(['user_id' => $userId], [
+                    'assigned_by' => $admin->id,
+                    'status' => SiteAgentAssignment::STATUS_IN_PROGRESS,
+                    'assigned_at' => now(),
+                    'completed_at' => null,
+                ]);
+            }
+
+            if ($removed->isNotEmpty()) {
+                // Plus d'accès au site : ses articles en cours sont rendus.
+                WordpressArticle::query()
+                    ->where('wordpress_site_id', $site->id)
+                    ->whereIn('assigned_to', $removed->all())
+                    ->get()
+                    ->each(fn (WordpressArticle $article) => $locks->release($article, $admin));
+
+                $site->agentAssignments()->whereIn('user_id', $removed->all())->get()->each->delete();
+            }
+
+            return [$added, $removed];
+        });
+
+        Log::info('Assignation de site modifiée.', [
+            'site_id' => $site->id,
+            'added' => $added->values()->all(),
+            'removed' => $removed->values()->all(),
+            'by' => $admin->id,
+        ]);
+
+        return redirect()
+            ->route('sites.index')
+            ->with('status', match (true) {
+                $added->isEmpty() && $removed->isEmpty() => 'Aucun changement d’assignation.',
+                default => 'Assignations de « '.$site->name.' » mises à jour.',
+            });
+    }
+
+    /**
+     * « Terminer » le travail d'un agent sur le site : le site disparaît de
+     * son espace et ses articles en cours sont libérés. L'Admin peut le lui
+     * réassigner (« Réassigner », ou en le cochant de nouveau) s'il reste une
+     * modification à faire.
+     */
+    public function assignmentStatus(Request $request, WordpressSite $site, User $user, ArticleLockService $locks): JsonResponse|RedirectResponse
+    {
+        $this->authorize('assign', $site);
+
+        $validated = $request->validate([
+            'status' => ['required', Rule::in([SiteAgentAssignment::STATUS_IN_PROGRESS, SiteAgentAssignment::STATUS_DONE])],
+        ]);
+
+        $assignment = $site->agentAssignments()->where('user_id', $user->id)->firstOrFail();
+
+        $done = $validated['status'] === SiteAgentAssignment::STATUS_DONE;
+        $admin = $request->user();
+
+        DB::transaction(function () use ($assignment, $done, $site, $user, $admin, $locks) {
+            $assignment->forceFill($done
+                ? ['status' => SiteAgentAssignment::STATUS_DONE, 'completed_at' => now()]
+                : ['status' => SiteAgentAssignment::STATUS_IN_PROGRESS, 'completed_at' => null, 'assigned_at' => now(), 'assigned_by' => $admin->id]
+            )->save();
+
+            if ($done) {
+                // Plus d'accès au site : ses articles en cours sont rendus.
+                WordpressArticle::query()
+                    ->where('wordpress_site_id', $site->id)
+                    ->where('assigned_to', $user->id)
+                    ->get()
+                    ->each(fn (WordpressArticle $article) => $locks->release($article, $admin));
+            }
+        });
+
+        Log::info('État d’assignation de site modifié.', [
+            'site_id' => $site->id,
+            'agent_id' => $user->id,
+            'status' => $assignment->status,
+            'by' => $admin->id,
+        ]);
+
+        $message = $done
+            ? 'Travail de '.$user->name.' sur « '.$site->name.' » terminé : le site n’apparaît plus dans son espace.'
+            : '« '.$site->name.' » réassigné à '.$user->name.'.';
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'ok' => true,
+                'status' => $assignment->status,
+                'label' => $assignment->statusLabel(),
+                'message' => $message,
+            ]);
+        }
+
+        return redirect()->route('sites.index')->with('status', $message);
+    }
+
+    /**
+     * Test de connexion en AJAX depuis la liste des sites.
      */
     public function test(WordpressSite $site): JsonResponse
     {
@@ -237,10 +304,9 @@ class SiteController extends Controller
     }
 
     /**
-     * Lance la synchronisation en arrière-plan, avec les identifiants de
-     * l'utilisateur s'il a connecté le site.
+     * Lance la synchronisation en arrière-plan.
      */
-    public function sync(Request $request, WordpressSite $site): JsonResponse
+    public function sync(WordpressSite $site): JsonResponse
     {
         $this->authorize('sync', $site);
 
@@ -258,7 +324,7 @@ class SiteController extends Controller
 
         $site->forceFill(['sync_status' => 'queued', 'sync_message' => null])->save();
 
-        SynchronizeSiteJob::dispatch($site, true, $request->user()->id);
+        SynchronizeSiteJob::dispatch($site);
         $this->worker->ensureRunning();
 
         return response()->json([
@@ -316,5 +382,43 @@ class SiteController extends Controller
         }
 
         return back();
+    }
+
+    /**
+     * Corrections et articles en cours, par site et par agent.
+     *
+     * @param  array<int, int>  $siteIds
+     * @return array<int, array<int, array{fixed: int, in_progress: int}>>
+     */
+    protected function agentActivity(array $siteIds): array
+    {
+        if ($siteIds === []) {
+            return [];
+        }
+
+        $activity = [];
+
+        ArticleStatusHistory::query()
+            ->whereIn('wordpress_site_id', $siteIds)
+            ->whereNotNull('agent_user_id')
+            ->where('status', WordpressArticle::AUDIT_FIXED)
+            ->selectRaw('wordpress_site_id, agent_user_id, count(*) as total')
+            ->groupBy('wordpress_site_id', 'agent_user_id')
+            ->get()
+            ->each(function ($row) use (&$activity) {
+                $activity[(int) $row->wordpress_site_id][(int) $row->agent_user_id]['fixed'] = (int) $row->total;
+            });
+
+        WordpressArticle::query()
+            ->whereIn('wordpress_site_id', $siteIds)
+            ->locked()
+            ->selectRaw('wordpress_site_id, assigned_to, count(*) as total')
+            ->groupBy('wordpress_site_id', 'assigned_to')
+            ->get()
+            ->each(function ($row) use (&$activity) {
+                $activity[(int) $row->wordpress_site_id][(int) $row->assigned_to]['in_progress'] = (int) $row->total;
+            });
+
+        return $activity;
     }
 }

@@ -25,7 +25,11 @@
             <div class="ag-empty__icon"><i class="bi bi-clipboard-check" aria-hidden="true"></i></div>
             <p class="ag-empty__title">Aucun site sélectionné</p>
             <p class="ag-empty__text">Connectez un site WordPress pour lancer des audits de contenu.</p>
-            <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">Connecter un site</a>
+            @can('create', \App\Models\WordpressSite::class)
+                <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">Connecter un site</a>
+            @else
+                <p class="ag-hint mt-2 mb-0">Aucun site ne vous est encore assigné : l’administrateur doit vous en assigner un.</p>
+            @endcan
 
         </div>
     </div>

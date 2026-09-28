@@ -36,16 +36,20 @@
                     </button>
                 </li>
             @endforeach
+            @can('create', \App\Models\WordpressSite::class)
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item" href="{{ route('sites.create') }}">
                 <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Connecter un site
             </a></li>
+            @endcan
 
         </ul>
     </div>
 @else
+    @can('create', \App\Models\WordpressSite::class)
     <a href="{{ route('sites.create') }}" class="btn btn-sm btn-primary">
         <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Connecter un site
     </a>
+    @endcan
 
 @endif

@@ -95,12 +95,11 @@ class ArticleLockController extends Controller
 
         $agent = User::query()->findOrFail($agentId);
 
-        // L'agent travaille avec ses propres identifiants : il doit avoir
-        // connecté ce site pour pouvoir en recevoir un article.
+        // Seul un agent assigné au site peut en recevoir un article.
         if (! $article->site?->isAccessibleBy($agent)) {
             return response()->json([
                 'ok' => false,
-                'message' => $agent->name.' n’a pas connecté ce site : impossible de lui attribuer cet article.',
+                'message' => $agent->name.' n’est pas assigné à ce site : impossible de lui attribuer cet article.',
             ], 422);
         }
 

@@ -25,9 +25,13 @@
             <div class="ag-empty__icon"><i class="bi bi-file-text" aria-hidden="true"></i></div>
             <p class="ag-empty__title">Aucun site sélectionné</p>
             <p class="ag-empty__text">Connectez un site WordPress pour afficher ses articles.</p>
-            <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">
+            @can('create', \App\Models\WordpressSite::class)
+                <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">
                 <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Connecter un site
             </a>
+            @else
+                <p class="ag-hint mt-2 mb-0">Aucun site ne vous est encore assigné : l’administrateur doit vous en assigner un.</p>
+            @endcan
 
         </div>
     </div>
@@ -162,6 +166,7 @@
                             <input type="checkbox" class="form-check-input" id="ag-select-all"
                                    aria-label="Tout sélectionner">
                         </th>
+                        <th scope="col" style="width:3.5rem;"><span class="visually-hidden">Images</span><i class="bi bi-images" aria-hidden="true" title="Images"></i></th>
                         <th scope="col">Titre</th>
                         <th scope="col">Catégories</th>
                         <th scope="col">URL</th>
@@ -202,6 +207,28 @@
             <div class="modal-footer">
                 <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Fermer</button>
                 <a href="#" class="btn btn-sm btn-primary" data-issues-edit>Corriger l’article</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+{{-- Modal : images de l'article (à la une + contenu) et leur qualité --}}
+<div class="modal fade" id="ag-images-modal" tabindex="-1" aria-labelledby="ag-images-heading" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="min-w-0">
+                    <h2 class="modal-title h6 mb-0" id="ag-images-heading">
+                        Images de l’article <span class="ag-hint" data-images-count></span>
+                    </h2>
+                    <p class="ag-hint mb-0 text-truncate" data-images-title></p>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
+            </div>
+            <div class="modal-body" data-images-list></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Fermer</button>
+                <a href="#" class="btn btn-sm btn-primary" data-images-edit>Ouvrir l’éditeur</a>
             </div>
         </div>
     </div>

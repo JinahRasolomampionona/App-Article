@@ -18,6 +18,8 @@ class SiteContext
 
     protected ?Collection $sites = null;
 
+    protected ?int $sitesFor = null;
+
     /**
      * @return Collection<int, WordpressSite>
      */
@@ -29,7 +31,13 @@ class SiteContext
             return collect();
         }
 
-        // Admin : tous les sites. Agent : ceux qu'il a connectés lui-même.
+        // Mémorisé par compte : l'instance peut servir plusieurs utilisateurs.
+        if ($this->sitesFor !== $user->id) {
+            $this->sites = null;
+            $this->sitesFor = $user->id;
+        }
+
+        // Admin : tous les sites. Agent : ceux qui lui sont assignés « En cours ».
         return $this->sites ??= WordpressSite::query()->accessibleBy($user)->orderBy('name')->get();
     }
 

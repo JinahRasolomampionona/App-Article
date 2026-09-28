@@ -57,7 +57,7 @@ class StatisticsController extends Controller
             'agentFilter' => $agentFilter,
             'agentFilterLabel' => is_int($agentFilter) ? User::query()->whereKey($agentFilter)->value('name') : null,
             'agents' => User::query()->agents()->orderBy('name')->get(['id', 'name', 'is_active']),
-            'userSites' => WordpressSite::query()->accessibleBy($filter->viewer)->orderBy('name')->get(['id', 'name']),
+            'userSites' => WordpressSite::query()->accessibleBy($filter->viewer, includeDone: true)->orderBy('name')->get(['id', 'name']),
         ]);
     }
 
@@ -89,14 +89,14 @@ class StatisticsController extends Controller
             'history' => $this->statistics->history($filter),
             'historyTotals' => $this->statistics->historyTotals($filter),
             'pending' => $this->statistics->pendingArticles($filter),
-            'inProgress' => $this->statistics->inProgressArticles($filter),
+            'inProgress' => $this->statistics->inProgressArticles($filter, onlyToFix: true),
             'series' => $this->corrections->series($filter, $granularity),
             'summary' => $this->corrections->summary($filter),
             'granularity' => $granularity,
             'siteFilter' => $filter->siteId,
             'statusFilter' => $filter->status,
             'agentFilter' => null,
-            'userSites' => WordpressSite::query()->accessibleBy($filter->viewer)->orderBy('name')->get(['id', 'name']),
+            'userSites' => WordpressSite::query()->accessibleBy($filter->viewer, includeDone: true)->orderBy('name')->get(['id', 'name']),
         ]);
     }
 }

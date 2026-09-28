@@ -2,12 +2,39 @@
     /** @var \App\Models\WordpressArticle $article */
     $issues = $article->relationLoaded('openIssues') ? $article->openIssues : $article->openIssues()->get();
     $visible = $issues->take(2);
+    $preview = \App\Services\Audit\ArticleImageReport::preview(
+        $article,
+        isset($site) ? $site->url : ($article->relationLoaded('site') ? $article->site?->url : null)
+    );
+    $imageIssues = $issues->whereIn('rule_type', ['featured_image_unreachable', 'body_image_broken', 'image_blurry', 'image_low_resolution', 'image_possibly_incoherent'])->count();
 @endphp
 
 <tr data-article-id="{{ $article->id }}">
     <td>
         <input type="checkbox" class="form-check-input ag-row-check" value="{{ $article->id }}"
                aria-label="Sélectionner l’article {{ $article->title }}">
+    </td>
+
+    {{-- Images : miniature de la première, ouvre la liste complète avec leur qualité. --}}
+    <td>
+        @if($preview['count'] > 0)
+            <button type="button" class="ag-row-thumb {{ $imageIssues > 0 ? 'ag-row-thumb--alert' : '' }}"
+                    data-images-url="{{ route('articles.images', $article) }}"
+                    aria-label="Voir les {{ $preview['count'] }} image(s) de {{ $article->title }}"
+                    data-bs-toggle="tooltip"
+                    title="{{ $preview['count'] }} image(s){{ $imageIssues > 0 ? ' · '.$imageIssues.' à vérifier' : '' }}">
+                @if($preview['thumb'])
+                    <img src="{{ $preview['thumb'] }}" alt="" loading="lazy" referrerpolicy="no-referrer" data-thumb-img>
+                @endif
+                <i class="bi bi-image" aria-hidden="true"></i>
+                <span class="ag-row-thumb__count">{{ $preview['count'] }}</span>
+            </button>
+        @else
+            <span class="ag-row-thumb ag-row-thumb--empty" data-bs-toggle="tooltip" title="Aucune image">
+                <i class="bi bi-image" aria-hidden="true"></i>
+                <span class="visually-hidden">Aucune image</span>
+            </span>
+        @endif
     </td>
 
     <td>

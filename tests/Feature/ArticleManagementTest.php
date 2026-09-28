@@ -367,7 +367,7 @@ class ArticleManagementTest extends TestCase
     public function test_un_agent_connecte_au_meme_site_consulte_sans_modifier(): void
     {
         $agent = User::factory()->create();
-        $this->connectSite($agent, $this->site);
+        $this->assignSite($agent, $this->site);
         $article = $this->article('Partagé');
 
         // Même site, articles partagés : consultation ouverte…

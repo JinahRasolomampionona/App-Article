@@ -32,7 +32,7 @@ final class StatisticsFilter
         $viewer = $request->user();
 
         $siteId = is_numeric($request->query('site'))
-            ? WordpressSite::query()->accessibleBy($viewer)->whereKey((int) $request->query('site'))->value('id')
+            ? WordpressSite::query()->accessibleBy($viewer, includeDone: true)->whereKey((int) $request->query('site'))->value('id')
             : null;
 
         $status = in_array($request->query('status'), ['ok', 'fixed', 'needs_fix', 'in_progress'], true)

@@ -254,7 +254,8 @@ class WordpressArticle extends Model
      *
      * Les statistiques suivent : « Corrigé » crédite `$by` (le compte qui le
      * déclare) d'une correction ; revenir à « À corriger » retire cette
-     * correction déclarée à la main.
+     * correction déclarée à la main — sauf si elle est acquise à un agent qui
+     * n'a plus l'article (voir StatisticsRecorder::retractManualCorrection).
      */
     public function applyManualStatus(string $status, ?User $by = null): void
     {
@@ -306,7 +307,7 @@ class WordpressArticle extends Model
         ])->save();
 
         if ($previousStatus === self::AUDIT_FIXED) {
-            app(StatisticsRecorder::class)->retractManualCorrection($this);
+            app(StatisticsRecorder::class)->retractManualCorrection($this, $by);
         }
     }
 

@@ -26,7 +26,7 @@ class ArticleLockService
     /** Durée d'un verrou, prolongée à chaque heartbeat. */
     public function ttlMinutes(): int
     {
-        return max(1, (int) config('articleguard.locks.ttl_minutes', 30));
+        return max(1, (int) config('articleguard.locks.ttl_minutes', 480));
     }
 
     /**

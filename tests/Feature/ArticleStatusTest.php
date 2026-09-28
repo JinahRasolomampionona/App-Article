@@ -28,7 +28,7 @@ class ArticleStatusTest extends TestCase
     {
         parent::setUp();
 
-        $this->user = User::factory()->create();
+        $this->user = User::factory()->admin()->create();
         $this->site = WordpressSite::factory()->for($this->user)->create();
     }
 
@@ -129,7 +129,7 @@ class ArticleStatusTest extends TestCase
     {
         $article = $this->articleWithIssue();
         $intruder = User::factory()->create();
-        $this->connectSite($intruder, $this->site);
+        $this->assignSite($intruder, $this->site);
 
         $this->actingAs($intruder)
             ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])

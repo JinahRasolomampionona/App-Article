@@ -37,8 +37,15 @@
 
         @if($lockState === 'mine')
             <p class="ag-hint mb-3" data-lock-info>
-                Vous seul pouvez modifier cet article. Il reste réservé tant que cette page est ouverte
-                (libéré automatiquement après {{ config('articleguard.locks.ttl_minutes') }} min d’inactivité).
+                @php
+                    $ttl = app(\App\Services\Assignment\ArticleLockService::class)->ttlMinutes();
+                    $ttlLabel = $ttl % 60 === 0 ? ($ttl / 60).' h' : ($ttl >= 60 ? intdiv($ttl, 60).' h '.($ttl % 60).' min' : $ttl.' min');
+                @endphp
+                Vous seul pouvez modifier cet article. Il reste réservé à votre nom tant que cette page est ouverte
+                (libéré automatiquement après {{ $ttlLabel }} d’inactivité).
+                @if($article->lock_expires_at)
+                    <span class="d-block mt-1">Réservé actuellement jusqu’au {{ $article->lock_expires_at->format('d/m/Y à H:i') }} (prolongé tant que cette page est ouverte).</span>
+                @endif
             </p>
             <div class="d-grid gap-2" data-lock-actions>
                 <button type="button" class="btn btn-success" data-finish

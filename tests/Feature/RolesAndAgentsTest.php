@@ -68,56 +68,57 @@ class RolesAndAgentsTest extends TestCase
             ->assertSee('data-label="Sites WordPress"', false);
     }
 
-    public function test_un_agent_connecte_et_gere_son_propre_site(): void
+    /* --- Sites : connexion par l'Admin, assignation aux agents ----------------- */
+
+    public function test_un_agent_ne_connecte_ni_ne_gere_de_site(): void
     {
-        \Illuminate\Support\Facades\Queue::fake();
-        \Illuminate\Support\Facades\Http::fake([
-            '*' => \Illuminate\Support\Facades\Http::response([], 200, ['X-WP-Total' => 0, 'X-WP-TotalPages' => 0]),
-        ]);
+        $this->assignSite($this->jinah, $this->site);
 
-        $this->actingAs($this->jinah)
-            ->get(route('dashboard'))
-            ->assertSee('data-label="Sites WordPress"', false);
+        $this->actingAs($this->jinah);
 
-        $this->actingAs($this->jinah)->get(route('sites.create'))->assertOk();
+        $this->get(route('sites.create'))->assertForbidden();
+        $this->post(route('sites.store'), ['name' => 'X', 'url' => 'https://93.184.216.34'])->assertForbidden();
+        $this->get(route('sites.edit', $this->site))->assertForbidden();
+        $this->put(route('sites.update', $this->site), ['name' => 'Piraté', 'url' => $this->site->url])->assertForbidden();
+        $this->postJson(route('sites.test', $this->site))->assertForbidden();
+        $this->delete(route('sites.destroy', $this->site))->assertForbidden();
+        $this->post(route('sites.assign', $this->site), ['agents' => [$this->jinah->id]])->assertForbidden();
+        $this->post(route('sites.assignment-status', [$this->site, $this->jinah]), ['status' => 'done'])->assertForbidden();
 
-        $this->actingAs($this->jinah)->post(route('sites.store'), [
-            'name' => 'Site de Jinah',
-            'url' => 'https://93.184.216.34',
-            'wp_username' => 'jinah',
-            'application_password' => 'abcd efgh ijkl mnop qrst uvwx',
-        ]);
-
-        $site = WordpressSite::firstWhere('name', 'Site de Jinah');
-
-        $this->assertNotNull($site);
-        $this->assertSame($this->jinah->id, $site->user_id);
-
-        $this->actingAs($this->jinah)->get(route('sites.edit', $site))->assertOk();
-        $this->actingAs($this->daniella)->get(route('sites.edit', $site))->assertForbidden();
-        // L'Admin suit le site (liste « Sites connectés par les agents »,
-        // articles) mais ne touche pas aux identifiants de Jinah.
-        $this->actingAs($this->admin)->get(route('sites.index'))->assertOk()
-            ->assertSee('Sites connectés par les agents')
-            ->assertSee('Site de Jinah');
-        $this->actingAs($this->admin)->get(route('articles.index', ['site' => $site->id]))->assertOk();
-        $this->actingAs($this->admin)->get(route('sites.edit', $site))->assertForbidden();
-
-        $this->actingAs($this->jinah)->delete(route('sites.destroy', $site))->assertRedirect();
-        $this->assertNull(WordpressSite::find($site->id));
+        $this->assertDatabaseHas('wordpress_sites', ['id' => $this->site->id, 'name' => $this->site->name]);
     }
 
-    public function test_un_agent_ne_voit_que_les_sites_qu_il_a_connectes(): void
+    public function test_l_espace_sites_d_un_agent_n_affiche_que_synchroniser(): void
+    {
+        \Illuminate\Support\Facades\Queue::fake();
+        $this->assignSite($this->jinah, $this->site);
+
+        $this->actingAs($this->jinah)
+            ->get(route('sites.index'))
+            ->assertOk()
+            ->assertSee($this->site->name)
+            ->assertSee('En cours')
+            ->assertSee('data-sync-url', false)
+            ->assertDontSee('data-test-url', false)
+            ->assertDontSee(route('sites.edit', $this->site), false)
+            ->assertDontSee('aria-label="Supprimer', false)
+            ->assertDontSee('Connecter un site');
+
+        $this->actingAs($this->jinah)->postJson(route('sites.sync', $this->site))->assertOk();
+    }
+
+    public function test_un_agent_ne_voit_que_les_sites_qui_lui_sont_assignes(): void
     {
         WordpressArticle::factory()->for($this->site, 'site')->create(['title' => 'Guide des bagues']);
 
-        // Jinah n'a pas connecté le site de l'Admin : il n'existe pas pour elle.
+        // Pas encore assigné : le site n'existe pas pour Jinah.
+        $this->actingAs($this->jinah)->get(route('sites.index'))->assertDontSee($this->site->name);
         $this->actingAs($this->jinah)
             ->get(route('articles.index', ['site' => $this->site->id]))
             ->assertOk()
             ->assertDontSee('Guide des bagues');
 
-        $this->connectSite($this->jinah, $this->site);
+        $this->assignSite($this->jinah, $this->site);
 
         $this->actingAs($this->jinah)
             ->get(route('articles.index', ['site' => $this->site->id]))
@@ -126,66 +127,163 @@ class RolesAndAgentsTest extends TestCase
     }
 
     /**
-     * L'Admin et un agent connectent le même site, chacun avec ses
-     * identifiants : un seul jeu d'articles, l'Admin voit le travail de
-     * l'agent. Retirer sa connexion ne supprime pas le site des autres.
+     * L'Admin assigne communitas.fr à Jinah, Koloina et Daniella : le site
+     * apparaît « En cours » chez chacun, sans connexion à faire. « Terminer »
+     * passe l'agent concerné à « Terminé » : le site disparaît de son espace
+     * seulement.
      */
-    public function test_un_meme_site_connecte_par_deux_comptes_partage_ses_articles(): void
+    public function test_l_admin_assigne_un_site_a_plusieurs_agents_puis_termine(): void
     {
-        \Illuminate\Support\Facades\Queue::fake();
-        \Illuminate\Support\Facades\Http::fake([
-            '*' => \Illuminate\Support\Facades\Http::response([], 200, ['X-WP-Total' => 0, 'X-WP-TotalPages' => 0]),
-        ]);
-
+        $koloina = User::factory()->create(['name' => 'Koloina']);
         $site = WordpressSite::factory()->for($this->admin)->create([
-            'name' => 'bijouteries.top',
-            'url' => 'https://93.184.216.34',
-            'wp_username' => 'admin-wp',
+            'name' => 'communitas.fr',
+            'url' => 'https://communitas.fr',
         ]);
-        $article = WordpressArticle::factory()->for($site, 'site')->create(['title' => 'Guide des bagues']);
-
-        $this->actingAs($this->daniella)->post(route('sites.store'), [
-            'name' => 'Mon bijouteries',
-            'url' => 'https://93.184.216.34',
-            'wp_username' => 'daniella-wp',
-            'application_password' => 'abcd efgh ijkl mnop qrst uvwx',
-        ])->assertRedirect();
-
-        // Pas de second site : Daniella a rejoint celui de l'Admin.
-        $this->assertSame(1, WordpressSite::where('url', 'https://93.184.216.34')->count());
-        $this->assertSame(2, $site->connections()->count());
-
-        // Chacun ses identifiants.
-        $this->actingAs($this->daniella);
-        $this->assertSame('daniella-wp', $site->fresh()->wp_username);
-        $this->actingAs($this->admin);
-        $this->assertSame('admin-wp', $site->fresh()->wp_username);
-
-        // Daniella prend l'article ; l'Admin le voit « En cours par Daniella ».
-        $this->actingAs($this->daniella)->postJson(route('articles.take', $article))->assertOk();
 
         $this->actingAs($this->admin)
-            ->get(route('articles.index', ['site' => $site->id]))
-            ->assertSee('En cours par Daniella');
+            ->post(route('sites.assign', $site), ['agents' => [$this->jinah->id, $koloina->id, $this->daniella->id]])
+            ->assertRedirect(route('sites.index'));
 
-        // Daniella se retire : le site et l'article restent pour l'Admin.
-        $this->actingAs($this->daniella)->delete(route('sites.destroy', $site))->assertRedirect();
+        foreach ([$this->jinah, $koloina, $this->daniella] as $agent) {
+            $this->actingAs($agent)
+                ->get(route('sites.index'))
+                ->assertOk()
+                ->assertSee('communitas.fr')
+                ->assertSee('En cours');
+        }
 
-        $this->assertNotNull(WordpressSite::find($site->id));
-        $this->assertNotNull($article->fresh());
-        $this->assertSame(1, $site->connections()->count());
+        $this->actingAs($this->admin)
+            ->followingRedirects()
+            ->post(route('sites.assignment-status', [$site, $this->jinah]), ['status' => 'done'])
+            ->assertOk();
+
+        $this->assertSame('done', $site->assignmentOf($this->jinah)->status);
+        $this->assertNotNull($site->assignmentOf($this->jinah)->completed_at);
+        $this->assertSame('in_progress', $site->assignmentOf($koloina)->status);
+
+        $this->actingAs($this->jinah)->get(route('sites.index'))->assertOk()->assertDontSee('communitas.fr');
+        $this->actingAs($koloina)->get(route('sites.index'))->assertOk()->assertSee('communitas.fr');
     }
 
-    public function test_l_admin_n_attribue_un_article_qu_a_un_agent_connecte_au_site(): void
+    public function test_terminer_retire_le_site_de_l_espace_de_l_agent_et_libere_ses_articles(): void
+    {
+        $this->assignSite($this->jinah, $this->site);
+        $article = $this->lockFor(WordpressArticle::factory()->for($this->site, 'site')->create(), $this->jinah);
+
+        $this->actingAs($this->admin)
+            ->followingRedirects()
+            ->post(route('sites.assignment-status', [$this->site, $this->jinah]), ['status' => 'done'])
+            ->assertOk();
+
+        $this->assertNull($article->fresh()->assigned_to);
+        $this->actingAs($this->jinah)->get(route('articles.show', $article))->assertForbidden();
+        $this->actingAs($this->jinah)->get(route('articles.edit', $article))->assertForbidden();
+        $this->actingAs($this->jinah)->get(route('sites.index'))->assertDontSee($this->site->name);
+
+        // L'Admin voit toujours Jinah, « Terminé », avec de quoi le réassigner.
+        $this->actingAs($this->admin)->get(route('sites.index'))->assertSeeInOrder(['Jinah', 'Terminé', 'Réassigner']);
+    }
+
+    public function test_l_admin_peut_reassigner_un_site_termine(): void
+    {
+        $this->assignSite($this->jinah, $this->site);
+        $this->site->assignmentOf($this->jinah)->forceFill(['status' => 'done', 'completed_at' => now()])->save();
+
+        // En le cochant de nouveau dans la fenêtre d'assignation…
+        $this->actingAs($this->admin)
+            ->post(route('sites.assign', $this->site), ['agents' => [$this->jinah->id]])
+            ->assertRedirect();
+
+        $assignment = $this->site->assignmentOf($this->jinah);
+        $this->assertSame('in_progress', $assignment->status);
+        $this->assertNull($assignment->completed_at);
+        $this->assertSame(1, $this->site->agentAssignments()->count());
+        $this->actingAs($this->jinah)->get(route('sites.index'))->assertSee($this->site->name);
+
+        // … ou avec « Réassigner ».
+        $assignment->forceFill(['status' => 'done', 'completed_at' => now()])->save();
+
+        $this->actingAs($this->admin)
+            ->post(route('sites.assignment-status', [$this->site, $this->jinah]), ['status' => 'in_progress'])
+            ->assertRedirect();
+
+        $this->assertSame('in_progress', $this->site->assignmentOf($this->jinah)->status);
+        $this->actingAs($this->jinah)->get(route('articles.index', ['site' => $this->site->id]))->assertOk();
+    }
+
+    public function test_un_site_termine_reste_dans_les_statistiques_de_l_agent(): void
+    {
+        $this->assignSite($this->jinah, $this->site);
+        $this->site->assignmentOf($this->jinah)->forceFill(['status' => 'done', 'completed_at' => now()])->save();
+
+        $this->actingAs($this->jinah)
+            ->get(route('statistics.index', ['site' => $this->site->id]))
+            ->assertOk()
+            ->assertSee($this->site->name);
+    }
+
+    public function test_retirer_un_agent_d_un_site_lui_retire_l_acces_et_libere_ses_articles(): void
+    {
+        $this->assignSite($this->jinah, $this->site);
+        $this->assignSite($this->daniella, $this->site);
+        $article = $this->lockFor(WordpressArticle::factory()->for($this->site, 'site')->create(), $this->jinah);
+
+        $this->actingAs($this->admin)
+            ->post(route('sites.assign', $this->site), ['agents' => [$this->daniella->id]])
+            ->assertRedirect();
+
+        $this->assertNull($this->site->assignmentOf($this->jinah));
+        $this->assertNull($article->fresh()->assigned_to);
+        $this->actingAs($this->jinah)->get(route('articles.show', $article))->assertForbidden();
+    }
+
+    public function test_l_admin_voit_le_travail_de_chaque_agent_sur_un_site(): void
+    {
+        $this->assignSite($this->jinah, $this->site);
+        $this->assignSite($this->daniella, $this->site);
+        $this->lockFor(WordpressArticle::factory()->for($this->site, 'site')->create(['title' => 'Guide des bagues']), $this->daniella);
+        ArticleStatusHistory::create([
+            'user_id' => $this->admin->id,
+            'wordpress_site_id' => $this->site->id,
+            'site_name' => $this->site->name,
+            'status' => WordpressArticle::AUDIT_FIXED,
+            'agent' => 'Jinah',
+            'agent_user_id' => $this->jinah->id,
+            'recorded_at' => now(),
+        ]);
+
+        $this->actingAs($this->admin)
+            ->get(route('sites.index'))
+            ->assertOk()
+            ->assertSee('Agents assignés')
+            ->assertSeeInOrder(['Daniella', '0 corrigé(s) · 1 en cours'])
+            ->assertSeeInOrder(['Jinah', '1 corrigé(s) · 0 en cours']);
+
+        $this->actingAs($this->admin)
+            ->get(route('articles.index', ['site' => $this->site->id]))
+            ->assertSee('En cours par Daniella');
+    }
+
+    public function test_l_application_password_est_stockee_chiffree_dans_sa_propre_table(): void
+    {
+        $credential = \App\Models\SiteCredential::where('wordpress_site_id', $this->site->id)->firstOrFail();
+        $raw = \Illuminate\Support\Facades\DB::table('site_credentials')->where('id', $credential->id)->value('application_password');
+
+        $this->assertSame('abcd1234abcd1234abcd1234', $credential->application_password);
+        $this->assertNotSame('abcd1234abcd1234abcd1234', $raw);
+        $this->assertFalse(\Illuminate\Support\Facades\Schema::hasColumn('wordpress_sites', 'application_password'));
+    }
+
+    public function test_l_admin_n_attribue_un_article_qu_a_un_agent_assigne_au_site(): void
     {
         $article = WordpressArticle::factory()->for($this->site, 'site')->create();
 
         $this->actingAs($this->admin)
             ->postJson(route('articles.agent', $article), ['agent' => $this->jinah->id])
             ->assertStatus(422)
-            ->assertJsonPath('message', 'Jinah n’a pas connecté ce site : impossible de lui attribuer cet article.');
+            ->assertJsonPath('message', 'Jinah n’est pas assigné à ce site : impossible de lui attribuer cet article.');
 
-        $this->connectSite($this->jinah, $this->site);
+        $this->assignSite($this->jinah, $this->site);
 
         $this->actingAs($this->admin)
             ->postJson(route('articles.agent', $article), ['agent' => $this->jinah->id])
@@ -339,6 +437,103 @@ class RolesAndAgentsTest extends TestCase
             ->assertDontSee('Par agent');
 
         $this->assertSame(1, $response->viewData('me')['corrected']);
+    }
+
+    /**
+     * Jinah prend 2 articles « À corriger » : En cours 2. Elle en passe un en
+     * « Corrigé » : Articles corrigés 1, En cours 1.
+     */
+    public function test_en_cours_et_corriges_de_l_agent_suivent_le_statut(): void
+    {
+        $this->assignSite($this->jinah, $this->site);
+
+        [$a, $b] = WordpressArticle::factory()->for($this->site, 'site')->count(2)->create([
+            'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,
+        ])->all();
+
+        foreach ([$a, $b] as $article) {
+            $this->actingAs($this->jinah)->postJson(route('articles.take', $article))->assertOk();
+        }
+
+        $me = $this->actingAs($this->jinah)->get(route('statistics.index'))->assertOk()
+            ->assertDontSee('parmi vos articles en cours')
+            ->viewData('me');
+        $this->assertSame(2, $me['in_progress']);
+        $this->assertSame(0, $me['corrected']);
+
+        $this->actingAs($this->jinah)
+            ->postJson(route('articles.status', $a), ['status' => WordpressArticle::AUDIT_FIXED])
+            ->assertOk();
+
+        $response = $this->actingAs($this->jinah)->get(route('statistics.index'))->assertOk();
+        $this->assertSame(1, $response->viewData('me')['in_progress']);
+        $this->assertSame(1, $response->viewData('me')['corrected']);
+        $this->assertSame(1, $response->viewData('inProgress')->total());
+    }
+
+    /**
+     * Jinah prend un article, le passe en « Corrigé », puis l'Admin la libère :
+     * la correction reste à son actif (Jinah, « Par agent », page Sites).
+     */
+    public function test_une_correction_reste_acquise_apres_liberation_par_l_admin(): void
+    {
+        $this->assignSite($this->jinah, $this->site);
+
+        foreach (['release', 'agent'] as $how) {
+            $article = WordpressArticle::factory()->for($this->site, 'site')->create([
+                'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,
+            ]);
+
+            $this->actingAs($this->jinah)->postJson(route('articles.take', $article))->assertOk();
+            $this->actingAs($this->jinah)
+                ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
+                ->assertOk();
+
+            $how === 'release'
+                ? $this->actingAs($this->admin)->postJson(route('articles.release', $article))->assertOk()
+                : $this->actingAs($this->admin)->postJson(route('articles.agent', $article), ['agent' => null])->assertOk();
+
+            $this->assertNull($article->fresh()->assigned_to);
+            $this->assertSame(WordpressArticle::AUDIT_FIXED, $article->fresh()->audit_status);
+        }
+
+        $me = $this->actingAs($this->jinah)->get(route('statistics.index'))->assertOk()->viewData('me');
+        $this->assertSame(2, $me['corrected']);
+        $this->assertSame(0, $me['in_progress']);
+
+        $jinahRow = collect($this->actingAs($this->admin)->get(route('statistics.index'))->viewData('agentRows'))
+            ->firstWhere('agent', $this->jinah->id);
+        $this->assertSame(2, $jinahRow['fixed']);
+        $this->assertSame(0, $jinahRow['in_progress']);
+
+        $this->actingAs($this->admin)->get(route('sites.index'))
+            ->assertSeeInOrder(['Jinah', '2 corrigé(s) · 0 en cours']);
+
+        // L'Admin repasse ensuite un des articles « À corriger » : la
+        // correction de Jinah reste acquise.
+        $article = WordpressArticle::query()->latest('id')->first();
+        $this->actingAs($this->admin)
+            ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_NEEDS_FIX])
+            ->assertOk();
+
+        $this->assertSame(WordpressArticle::AUDIT_NEEDS_FIX, $article->fresh()->audit_status);
+        $this->assertSame(2, $this->actingAs($this->jinah)->get(route('statistics.index'))->viewData('me')['corrected']);
+    }
+
+    public function test_l_agent_peut_annuler_sa_declaration_tant_qu_il_detient_l_article(): void
+    {
+        $this->assignSite($this->jinah, $this->site);
+        $article = WordpressArticle::factory()->for($this->site, 'site')->create([
+            'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,
+        ]);
+
+        $this->actingAs($this->jinah)->postJson(route('articles.take', $article))->assertOk();
+        $this->actingAs($this->jinah)->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])->assertOk();
+        $this->actingAs($this->jinah)->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_NEEDS_FIX])->assertOk();
+
+        $me = $this->actingAs($this->jinah)->get(route('statistics.index'))->viewData('me');
+        $this->assertSame(0, $me['corrected']);
+        $this->assertSame(1, $me['in_progress']);
     }
 
     public function test_l_admin_voit_toutes_les_statistiques_et_filtre_par_agent(): void

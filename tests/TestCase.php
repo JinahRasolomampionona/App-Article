@@ -2,7 +2,7 @@
 
 namespace Tests;
 
-use App\Models\SiteConnection;
+use App\Models\SiteAgentAssignment;
 use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
@@ -11,17 +11,16 @@ use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 abstract class TestCase extends BaseTestCase
 {
     /**
-     * Connecte `$user` au site avec ses propres identifiants WordPress.
+     * Assigne le site à `$user`, comme le ferait l'Admin.
      */
-    protected function connectSite(User $user, WordpressSite $site, array $attributes = []): SiteConnection
+    protected function assignSite(User $user, WordpressSite $site, string $status = SiteAgentAssignment::STATUS_IN_PROGRESS): SiteAgentAssignment
     {
-        return SiteConnection::create(array_merge([
+        return SiteAgentAssignment::create([
             'wordpress_site_id' => $site->id,
             'user_id' => $user->id,
-            'wp_username' => strtolower($user->name ?: 'agent'),
-            'application_password' => 'abcd1234abcd1234abcd1234',
-            'connection_status' => WordpressSite::STATUS_CONNECTED,
-        ], $attributes));
+            'status' => $status,
+            'assigned_at' => now(),
+        ]);
     }
 
     /**

@@ -2,7 +2,7 @@
 
 namespace App\Support;
 
-use App\Models\SiteConnection;
+use App\Models\SiteAgentAssignment;
 use App\Models\User;
 use Illuminate\Support\Collection;
 
@@ -34,16 +34,18 @@ class AgentCatalog
     protected static array $bySite = [];
 
     /**
-     * Agents actifs ayant connecté ce site : les seuls à qui l'un de ses
-     * articles peut être attribué, puisqu'ils y travaillent avec leurs propres
-     * identifiants WordPress.
+     * Agents actifs assignés « En cours » à ce site par l'Admin : les seuls à
+     * qui l'un de ses articles peut être attribué.
      *
      * @return Collection<int, User>
      */
     public static function forSite(int $siteId): Collection
     {
         return static::$bySite[$siteId] ??= static::all()
-            ->whereIn('id', SiteConnection::query()->where('wordpress_site_id', $siteId)->pluck('user_id'))
+            ->whereIn('id', SiteAgentAssignment::query()
+                ->where('wordpress_site_id', $siteId)
+                ->where('status', SiteAgentAssignment::STATUS_IN_PROGRESS)
+                ->pluck('user_id'))
             ->values();
     }
 

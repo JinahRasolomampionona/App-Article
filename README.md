@@ -260,24 +260,22 @@ mêmes sites et les mêmes articles. Deux rôles :
 
 | Rôle | Peut |
 |---|---|
-| **Admin** | connecter ses propres sites (Tester, Synchroniser, Modifier, Supprimer) ; voir tous les sites, y compris ceux des agents, et le travail de chacun ; créer, modifier, désactiver les comptes (`/agents`) ; attribuer ou libérer n'importe quel article ; statistiques globales filtrables par site, agent, date et statut ; paramètres d'audit |
-| **Agent** | connecter ses propres sites avec ses identifiants WordPress (Tester, Synchroniser, Modifier, Supprimer) ; sur ses sites : voir les articles disponibles et ceux en cours chez les autres ; **prendre** un article ; modifier uniquement l'article qu'il détient ; le **libérer** ; **terminer** une correction ; consulter uniquement ses propres statistiques |
+| **Admin** | connecter un ou plusieurs sites (Tester, Synchroniser, Modifier, Supprimer) ; **assigner chaque site à un ou plusieurs agents** et marquer leur travail « Terminé » ; voir tous les sites et le travail de chaque agent ; créer, modifier, désactiver les comptes (`/agents`) ; attribuer ou libérer n'importe quel article ; statistiques globales filtrables par site, agent, date et statut ; paramètres d'audit |
+| **Agent** | voir dans *Sites WordPress* les sites que l'Admin lui a assignés (badge *En cours* / *Terminé*, bouton Synchroniser uniquement — rien à connecter) ; sur ces sites : voir les articles disponibles et ceux en cours chez les autres ; **prendre** un article ; modifier uniquement l'article qu'il détient ; le **libérer** ; **terminer** une correction ; poser le statut À corriger / Corrigé ; consulter uniquement ses propres statistiques |
 
-### Sites et connexions
+### Sites et assignations
 
-Chaque compte connecte ses sites avec **ses propres identifiants WordPress**
-(table `site_connections`) et ne voit que ses sites ; l'Admin voit tous les
-sites. Un même site connecté par plusieurs comptes n'existe qu'une fois : ses
-articles, verrous, audits et statistiques sont partagés. C'est ce lien qui
-permet à l'Admin, sur `bijouteries.top`, de voir quel agent traite quel
-article et ce qui est corrigé ou à corriger.
-
-- Tester, Modifier, Supprimer agissent sur la connexion du compte seulement ;
-  supprimer ne retire le site et ses articles que si plus personne ne l'a
-  connecté.
-- Le nom et l'adresse d'un site partagé sont communs : ils ne se modifient
-  que si l'on est seul à l'avoir connecté (l'Admin peut toujours renommer).
-- Un article ne peut être attribué qu'à un agent ayant connecté son site.
+- L'**Admin** connecte les sites. Les identifiants WordPress de chaque site
+  (identifiant + Application Password chiffrée) sont stockés dans leur propre
+  table, `site_credentials` — une ligne par site, jamais réaffichée en clair.
+- Il **assigne** un site à un ou plusieurs agents (bouton *Assigner* de la
+  page Sites WordPress ; table `site_agent_assignments`). Le site apparaît
+  aussitôt dans l'espace de chaque agent, avec le badge **En cours** ; quand
+  l'Admin clique sur **Terminer**, le badge de l'agent passe à **Terminé**.
+- Décocher un agent lui retire l'accès au site et libère ses articles en cours.
+- Pour chaque site, l'Admin voit les agents assignés, leur état, leurs
+  articles corrigés et en cours, et peut ouvrir les articles de chacun.
+- Un article ne peut être attribué qu'à un agent assigné à son site.
 
 Toutes ces règles sont contrôlées côté Laravel (policies, porte `admin`,
 `StatisticsFilter`) : une URL ou une requête AJAX forgée est refusée.
@@ -289,7 +287,7 @@ Toutes ces règles sont contrôlées côté Laravel (policies, porte `admin`,
   transaction avec `SELECT … FOR UPDATE` suivie d'une écriture conditionnelle —
   si deux agents cliquent en même temps, le second reçoit
   « Cet article est actuellement traité par Daniella. » (HTTP 409).
-- Le verrou expire après `AG_LOCK_TTL_MINUTES` (30 min) ; l'éditeur le prolonge
+- Le verrou expire après `AG_LOCK_TTL_MINUTES` (480 min = 8 h) ; l’éditeur le prolonge
   par un heartbeat (`AG_LOCK_HEARTBEAT_SECONDS`). Un verrou expiré est
   considéré comme libre partout, sans attendre de tâche planifiée.
 - La page Articles rafraîchit l'état des lignes affichées toutes les

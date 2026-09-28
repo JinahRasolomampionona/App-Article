@@ -15,7 +15,7 @@ class StoreSiteRequest extends FormRequest
 
     public function authorize(): bool
     {
-        return $this->user() !== null;
+        return $this->user()?->can('create', WordpressSite::class) ?? false;
     }
 
     /**
@@ -51,34 +51,17 @@ class StoreSiteRequest extends FormRequest
                 return;
             }
 
-            $this->validateUrlOwnership($validator);
+            // Un site n'est connecté qu'une fois ; il est ensuite assigné aux
+            // agents.
+            $duplicate = WordpressSite::query()
+                ->where('url', $this->normalizedUrl)
+                ->when($this->route('site'), fn ($query, $site) => $query->whereKeyNot($site->id))
+                ->exists();
+
+            if ($duplicate) {
+                $validator->errors()->add('url', 'Ce site est déjà connecté.');
+            }
         });
-    }
-
-    /**
-     * Création : un site déjà connecté par un autre compte est rejoint (voir
-     * existingSite()) ; seul un doublon pour le même compte est refusé.
-     */
-    protected function validateUrlOwnership(Validator $validator): void
-    {
-        $existing = $this->existingSite();
-
-        if ($existing !== null && $existing->connections()->where('user_id', $this->user()->id)->exists()) {
-            $validator->errors()->add('url', 'Vous avez déjà connecté ce site.');
-        }
-    }
-
-    /** Site déjà présent à cette adresse, connecté par un autre compte. */
-    public function existingSite(): ?WordpressSite
-    {
-        if ($this->normalizedUrl === null) {
-            return null;
-        }
-
-        return WordpressSite::query()
-            ->where('url', $this->normalizedUrl)
-            ->when($this->route('site'), fn ($query, $site) => $query->whereKeyNot($site->id))
-            ->first();
     }
 
     public function normalizedUrl(): string

@@ -18,7 +18,7 @@ class EditorScreenTest extends TestCase
 
     public function test_l_editeur_expose_les_details_du_fichier_joint_et_de_l_image(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->admin()->create();
         $site = WordpressSite::factory()->for($user)->create(['url' => 'https://example.com']);
         $article = WordpressArticle::factory()->for($site, 'site')->create([
             'content' => '<p>Texte</p><img src="https://example.com/a.jpg" alt="">',
@@ -40,7 +40,7 @@ class EditorScreenTest extends TestCase
 
     public function test_la_colonne_d_audit_detaille_chaque_probleme(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->admin()->create();
         $site = WordpressSite::factory()->for($user)->create(['url' => 'https://example.com']);
         $article = WordpressArticle::factory()->for($site, 'site')->create([
             'content' => '<p>Texte</p><img src="https://example.com/uploads/bague-floue.jpg" alt="Bague">',

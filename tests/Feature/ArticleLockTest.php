@@ -44,8 +44,8 @@ class ArticleLockTest extends TestCase
         $this->site = WordpressSite::factory()->for($this->admin)->create(['url' => 'https://bijouteries.top']);
 
         // Chaque agent a connecté le site avec ses propres identifiants.
-        $this->connectSite($this->daniella, $this->site);
-        $this->connectSite($this->jinah, $this->site);
+        $this->assignSite($this->daniella, $this->site);
+        $this->assignSite($this->jinah, $this->site);
         session(['articleguard.current_site' => $this->site->id]);
     }
 
@@ -497,6 +497,52 @@ class ArticleLockTest extends TestCase
     /**
      * @param  array<string, mixed>  $attributes
      */
+    /**
+     * Par défaut, Jinah garde l'article à son nom pendant 8 h : personne
+     * d'autre ne peut le prendre avant. Après 8 h sans activité, il est libre.
+     * L'Admin, lui, peut le libérer à tout moment.
+     */
+    public function test_un_article_reste_au_nom_de_l_agent_pendant_8_heures(): void
+    {
+        config(['articleguard.locks.ttl_minutes' => (int) env('AG_LOCK_TTL_MINUTES', 480)]);
+        $this->assertSame(480, app(ArticleLockService::class)->ttlMinutes());
+
+        $article = $this->article();
+
+        $this->actingAs($this->jinah)->postJson(route('articles.take', $article))->assertOk();
+
+        $this->travel(7)->hours();
+        $this->travel(59)->minutes();
+
+        $this->assertTrue($article->fresh()->isLockedBy($this->jinah));
+        $this->actingAs($this->daniella)
+            ->postJson(route('articles.take', $article))
+            ->assertStatus(409)
+            ->assertSee('Jinah');
+
+        $this->travel(2)->minutes();
+
+        $this->assertFalse($article->fresh()->isLocked());
+        $this->actingAs($this->daniella)->postJson(route('articles.take', $article))->assertOk();
+        $this->assertTrue($article->fresh()->isLockedBy($this->daniella));
+    }
+
+    public function test_l_admin_libere_un_article_a_tout_moment_meme_avec_8_heures(): void
+    {
+        config(['articleguard.locks.ttl_minutes' => 480]);
+        $article = $this->article();
+
+        $this->actingAs($this->jinah)->postJson(route('articles.take', $article))->assertOk();
+        $this->travel(5)->minutes();
+
+        $this->actingAs($this->admin)
+            ->postJson(route('articles.release', $article))
+            ->assertOk()
+            ->assertJsonPath('state', 'available');
+
+        $this->assertNull($article->fresh()->assigned_to);
+    }
+
     protected function article(array $attributes = []): WordpressArticle
     {
         return WordpressArticle::factory()->for($this->site, 'site')->create($attributes);

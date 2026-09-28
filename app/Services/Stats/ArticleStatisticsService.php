@@ -69,7 +69,11 @@ class ArticleStatisticsService
     /**
      * Statistiques personnelles d'un agent.
      *
-     * @return array{corrected: int, ok: int, fixed: int, in_progress: int, to_fix: int, week: int, month: int, completed: int, last_activity: ?Carbon}
+     * « En cours » = articles qu'il a pris et qui sont encore « À corriger » :
+     * passer l'un d'eux en « Corrigé » le retire des « En cours » et l'ajoute
+     * aux « Articles corrigés » (historique).
+     *
+     * @return array{corrected: int, ok: int, fixed: int, in_progress: int, week: int, month: int, completed: int, last_activity: ?Carbon}
      */
     public function agentOverview(StatisticsFilter $filter): array
     {
@@ -95,8 +99,7 @@ class ArticleStatisticsService
             'corrected' => (int) ($row->total ?? 0),
             'ok' => (int) ($row->ok ?? 0),
             'fixed' => (int) ($row->fixed ?? 0),
-            'in_progress' => (clone $locked)->count(),
-            'to_fix' => (clone $locked)->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX)->count(),
+            'in_progress' => (clone $locked)->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX)->count(),
             'week' => (clone $history)->where('recorded_at', '>=', $now->startOfWeek())->count(),
             'month' => (clone $history)->where('recorded_at', '>=', $now->startOfMonth())->count(),
             'completed' => ArticleAssignment::query()
@@ -224,12 +227,16 @@ class ArticleStatisticsService
     /**
      * Articles en cours de traitement, les plus anciennes prises d'abord.
      *
+     * $onlyToFix (espace agent) : seulement ceux encore « À corriger », comme
+     * la carte « En cours » de l'agent.
+     *
      * @return LengthAwarePaginator<int, WordpressArticle>
      */
-    public function inProgressArticles(StatisticsFilter $filter, int $perPage = 10): LengthAwarePaginator
+    public function inProgressArticles(StatisticsFilter $filter, int $perPage = 10, bool $onlyToFix = false): LengthAwarePaginator
     {
         return $this->articles($filter)
             ->locked()
+            ->when($onlyToFix, fn (Builder $q) => $q->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX))
             ->with(['site:id,name,url', 'assignee:id,name'])
             ->orderBy('locked_at')
             ->paginate($perPage, ['*'], 'progress_page')

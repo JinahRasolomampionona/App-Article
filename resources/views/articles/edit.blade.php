@@ -24,7 +24,7 @@
 @unless($site->hasCredentials())
     <div class="alert alert-warning py-2 px-3 small" role="alert">
         Ce site est connecté en lecture seule. Ajoutez un identifiant WordPress et une
-        Application Password dans @can('update', $site) <a href="{{ route('sites.edit', $site) }}">les paramètres du site</a> @else les paramètres du site (réservé à la personne qui l’a connecté ou à l’Admin) @endcan
+        Application Password dans @can('update', $site) <a href="{{ route('sites.edit', $site) }}">les paramètres du site</a> @else les paramètres du site (réservés à l’Admin) @endcan
         pour pouvoir enregistrer vos modifications.
     </div>
 @elseif($site->isReadOnlyAccount())
@@ -35,7 +35,7 @@
         @if($site->wp_role) (rôle « {{ $site->wp_role }} ») @endif
         n’a pas le droit de modifier les articles de ce site : WordPress refusera l’enregistrement.
         Utilisez un compte ayant au minimum le rôle « Auteur » dans
-        @can('update', $site) <a href="{{ route('sites.edit', $site) }}">les paramètres du site</a> @else les paramètres du site (réservé à la personne qui l’a connecté ou à l’Admin) @endcan.
+        @can('update', $site) <a href="{{ route('sites.edit', $site) }}">les paramètres du site</a> @else les paramètres du site (réservés à l’Admin) @endcan.
     </div>
 @endunless
 

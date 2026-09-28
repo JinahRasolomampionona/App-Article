@@ -6,15 +6,16 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Connexion d'un compte (Admin ou Agent) à un site WordPress, avec ses propres
- * identifiants. Le site et ses articles sont partagés ; la connexion, elle,
- * appartient au compte.
+ * Identifiants WordPress d'un site (une ligne par site), saisis par l'Admin.
+ *
+ * L'Application Password est chiffrée par Laravel et n'est jamais réaffichée
+ * en clair. Les agents assignés au site travaillent à travers ces
+ * identifiants : ils n'ont rien à connecter eux-mêmes.
  */
-class SiteConnection extends Model
+class SiteCredential extends Model
 {
     protected $fillable = [
         'wordpress_site_id',
-        'user_id',
         'wp_username',
         'application_password',
         'wp_can_edit',
@@ -42,21 +43,9 @@ class SiteConnection extends Model
         ];
     }
 
-    protected static function booted(): void
-    {
-        // La liste des agents par site en dépend.
-        static::saved(fn () => \App\Support\AgentCatalog::flush());
-        static::deleted(fn () => \App\Support\AgentCatalog::flush());
-    }
-
     public function site(): BelongsTo
     {
         return $this->belongsTo(WordpressSite::class, 'wordpress_site_id');
-    }
-
-    public function user(): BelongsTo
-    {
-        return $this->belongsTo(User::class);
     }
 
     public function hasCredentials(): bool

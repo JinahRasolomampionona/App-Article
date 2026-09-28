@@ -166,7 +166,7 @@ return [
     */
 
     'locks' => [
-        'ttl_minutes' => (int) env('AG_LOCK_TTL_MINUTES', 30),
+        'ttl_minutes' => (int) env('AG_LOCK_TTL_MINUTES', 480),
         // Intervalle du heartbeat de l'éditeur, en secondes.
         'heartbeat_seconds' => (int) env('AG_LOCK_HEARTBEAT_SECONDS', 60),
         // Rafraîchissement des assignations sur la page Articles, en secondes.

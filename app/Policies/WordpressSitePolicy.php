@@ -6,13 +6,9 @@ use App\Models\User;
 use App\Models\WordpressSite;
 
 /**
- * Chaque compte connecte ses propres sites, avec ses propres identifiants
- * WordPress. Un site (et ses articles) est partagé entre les comptes qui l'ont
- * connecté ; l'Admin voit tous les sites pour suivre le travail des agents.
- *
- * - voir, synchroniser, utiliser la médiathèque : avoir accès au site ;
- * - tester, modifier, supprimer : avoir sa propre connexion au site — chacun
- *   gère ses identifiants, personne ne touche à ceux d'un autre.
+ * L'Admin connecte et gère les sites (tester, modifier, supprimer, assigner
+ * aux agents). Un agent voit les sites qui lui sont assignés et peut les
+ * synchroniser : il n'a rien à connecter lui-même.
  */
 class WordpressSitePolicy
 {
@@ -28,22 +24,29 @@ class WordpressSitePolicy
 
     public function create(User $user): bool
     {
-        return true;
+        return $user->isAdmin();
     }
 
     public function update(User $user, WordpressSite $site): bool
     {
-        return $this->connected($user, $site);
+        return $user->isAdmin();
     }
 
     public function delete(User $user, WordpressSite $site): bool
     {
-        return $this->connected($user, $site);
+        return $user->isAdmin();
     }
 
+    /** Test de connexion : il révèle l'état des identifiants. */
     public function test(User $user, WordpressSite $site): bool
     {
-        return $this->connected($user, $site);
+        return $user->isAdmin();
+    }
+
+    /** Assigner le site aux agents, clore ou rouvrir une assignation. */
+    public function assign(User $user, WordpressSite $site): bool
+    {
+        return $user->isAdmin();
     }
 
     public function sync(User $user, WordpressSite $site): bool
@@ -51,13 +54,12 @@ class WordpressSitePolicy
         return $site->isAccessibleBy($user);
     }
 
+    /**
+     * Médiathèque : un agent qui corrige un article doit pouvoir choisir,
+     * téléverser une image ou renseigner son texte alternatif.
+     */
     public function manageMedia(User $user, WordpressSite $site): bool
     {
         return $site->isAccessibleBy($user);
-    }
-
-    protected function connected(User $user, WordpressSite $site): bool
-    {
-        return $site->connections()->where('user_id', $user->id)->exists();
     }
 }

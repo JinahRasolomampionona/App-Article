@@ -81,8 +81,14 @@ class StatisticsRecorder
      * Annule la dernière correction déclarée à la main d'un article qui repasse
      * « À corriger » : une déclaration retirée ne doit plus compter dans les
      * statistiques. Une correction confirmée par un audit n'est jamais retirée.
+     *
+     * Une correction créditée à un agent lui reste acquise quand quelqu'un
+     * d'autre ($by, l'Admin par exemple) repasse l'article « À corriger » après
+     * qu'il l'a quitté (libéré par lui, par l'Admin, ou expiré). Elle n'est
+     * retirée que si l'agent annule lui-même sa déclaration, ou si l'article
+     * est encore entre ses mains (erreur de saisie corrigée sur le moment).
      */
-    public function retractManualCorrection(WordpressArticle $article): bool
+    public function retractManualCorrection(WordpressArticle $article, ?User $by = null): bool
     {
         $last = ArticleStatusHistory::query()
             ->where('wordpress_article_id', $article->id)
@@ -91,6 +97,16 @@ class StatisticsRecorder
             ->first();
 
         if ($last === null || ! $last->resolved_manually || $last->status !== WordpressArticle::AUDIT_FIXED) {
+            return false;
+        }
+
+        $credited = $last->agent_user_id !== null ? (int) $last->agent_user_id : null;
+        $article->refresh();
+
+        $ownUndo = $credited === null || ($by !== null && $by->id === $credited);
+        $stillHeld = $article->isLocked() && (int) $article->assigned_to === $credited;
+
+        if (! $ownUndo && ! $stillHeld) {
             return false;
         }
 

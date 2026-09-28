@@ -22,6 +22,14 @@ class AuditPanelPresenter
      * @var array<int, array{label: string, rule: string, types: array<int, string>, target: string}>
      */
     protected const CHECKS = [
+        // En tête, juste sous le résumé des problèmes : c'est le bloc le plus
+        // détaillé (image, netteté mesurée, seuil).
+        [
+            'label' => 'Netteté des images',
+            'rule' => 'image_blur',
+            'types' => ['image_blurry', 'image_low_resolution'],
+            'target' => 'images',
+        ],
         [
             'label' => 'Image à la une',
             'rule' => 'featured_image',
@@ -63,12 +71,6 @@ class AuditPanelPresenter
             'rule' => 'missing_h2',
             'types' => ['missing_h2'],
             'target' => 'content',
-        ],
-        [
-            'label' => 'Netteté des images',
-            'rule' => 'image_blur',
-            'types' => ['image_blurry', 'image_low_resolution'],
-            'target' => 'images',
         ],
         [
             'label' => 'Cohérence des images',

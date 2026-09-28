@@ -229,6 +229,14 @@ export function initArticlesTable() {
             return;
         }
 
+        const imagesButton = event.target.closest('[data-images-url]');
+
+        if (imagesButton) {
+            event.preventDefault();
+            await showImages(imagesButton.dataset.imagesUrl);
+            return;
+        }
+
         const auditButton = event.target.closest('[data-audit-url]');
 
         if (auditButton) {
@@ -494,6 +502,62 @@ export function initArticlesTable() {
             list.innerHTML = `<p class="text-danger mb-0">${escapeHtml(error.message)}</p>`;
         }
     }
+
+    /* --- Modal « Images de l'article » --- */
+
+    const imagesElement = document.getElementById('ag-images-modal');
+    const imagesModal = imagesElement ? new Modal(imagesElement) : null;
+
+    imagesElement?.addEventListener('hidden.bs.modal', () => {
+        disposeTooltips(imagesElement);
+    });
+
+    async function showImages(url) {
+        if (!imagesModal) return;
+
+        const list = imagesElement.querySelector('[data-images-list]');
+        const title = imagesElement.querySelector('[data-images-title]');
+        const count = imagesElement.querySelector('[data-images-count]');
+        const editLink = imagesElement.querySelector('[data-images-edit]');
+
+        title.textContent = '';
+        count.textContent = '';
+        list.innerHTML = '<div class="ag-skeleton mb-2" style="height:6rem"></div><div class="ag-skeleton" style="height:6rem"></div>';
+        imagesModal.show();
+
+        try {
+            const data = await http.get(url);
+            title.textContent = data.title;
+            count.textContent = `(${data.count})`;
+            editLink.href = data.edit_url;
+            // HTML rendu et échappé côté serveur (Blade).
+            list.innerHTML = data.html;
+            initTooltips(list);
+        } catch (error) {
+            list.innerHTML = `<p class="text-danger mb-0">${escapeHtml(error.message)}</p>`;
+        }
+    }
+
+    // Une image qui ne se charge pas (404, hotlink refusé…) : miniature
+    // remplacée par l'icône, aperçu du modal par un message explicite.
+    // `error` ne remonte pas : écoute en phase de capture.
+    document.addEventListener(
+        'error',
+        (event) => {
+            const img = event.target;
+            if (!(img instanceof HTMLImageElement)) return;
+
+            if (img.matches('[data-thumb-img]')) {
+                img.closest('.ag-row-thumb')?.classList.add('ag-row-thumb--broken');
+                img.remove();
+            } else if (img.matches('[data-report-img]')) {
+                const preview = img.closest('.ag-image-report__preview');
+                img.closest('a')?.remove();
+                preview?.querySelector('[data-report-fallback]')?.removeAttribute('hidden');
+            }
+        },
+        true,
+    );
 
     syncSelection();
 }

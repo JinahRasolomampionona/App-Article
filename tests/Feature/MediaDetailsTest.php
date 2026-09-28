@@ -24,7 +24,7 @@ class MediaDetailsTest extends TestCase
     {
         parent::setUp();
 
-        $this->user = User::factory()->create();
+        $this->user = User::factory()->admin()->create();
         $this->site = WordpressSite::factory()->for($this->user)->create(['url' => 'https://example.com']);
     }
 

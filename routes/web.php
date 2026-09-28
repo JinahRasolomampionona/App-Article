@@ -34,9 +34,10 @@ Route::get('/', fn () => redirect()->route(auth()->check() ? 'dashboard' : 'logi
 | Application (authentification obligatoire)
 |--------------------------------------------------------------------------
 |
-| Espace partagé : tous les comptes actifs voient les mêmes sites et les
-| mêmes articles. Les droits fins (modifier un article, gérer les comptes…)
-| sont contrôlés par les policies et la porte `admin`.
+| L'Admin connecte les sites et les assigne aux agents ; un agent voit les
+| sites qui lui sont assignés et leurs articles. Les droits fins (modifier un
+| article, gérer les comptes…) sont contrôlés par les policies et la porte
+| `admin`.
 |
 */
 
@@ -45,14 +46,8 @@ Route::middleware(['auth', 'active'])->group(function () {
 
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
 
-    /* --- Sites WordPress (tous les comptes ; droits fins par la policy) --- */
+    /* --- Sites WordPress (Admin : tous les sites · Agent : ses sites assignés) --- */
     Route::get('/sites', [SiteController::class, 'index'])->name('sites.index');
-    Route::get('/sites/create', [SiteController::class, 'create'])->name('sites.create');
-    Route::post('/sites', [SiteController::class, 'store'])->name('sites.store');
-    Route::get('/sites/{site}/edit', [SiteController::class, 'edit'])->name('sites.edit');
-    Route::put('/sites/{site}', [SiteController::class, 'update'])->name('sites.update');
-    Route::delete('/sites/{site}', [SiteController::class, 'destroy'])->name('sites.destroy');
-    Route::post('/sites/{site}/test', [SiteController::class, 'test'])->name('sites.test');
     Route::post('/sites/{site}/sync', [SiteController::class, 'sync'])->name('sites.sync');
     Route::get('/sites/{site}/sync-status', [SiteController::class, 'syncStatus'])->name('sites.sync-status');
     Route::post('/sites/{site}/select', [SiteController::class, 'select'])->name('sites.select');
@@ -76,6 +71,7 @@ Route::middleware(['auth', 'active'])->group(function () {
     Route::post('/articles/{article}/status', [ArticleController::class, 'updateStatus'])->name('articles.status');
     Route::post('/articles/{article}/refresh', [ArticleController::class, 'refresh'])->name('articles.refresh');
     Route::get('/articles/{article}/issues', [ArticleController::class, 'issues'])->name('articles.issues');
+    Route::get('/articles/{article}/images', [ArticleController::class, 'images'])->name('articles.images');
 
     /* --- Prise en charge (verrou) --- */
     Route::post('/articles/{article}/agent', [ArticleLockController::class, 'assign'])->name('articles.agent');
@@ -99,6 +95,16 @@ Route::middleware(['auth', 'active'])->group(function () {
     */
 
     Route::middleware('can:admin')->group(function () {
+        Route::get('/sites/create', [SiteController::class, 'create'])->name('sites.create');
+        Route::post('/sites', [SiteController::class, 'store'])->name('sites.store');
+        Route::get('/sites/{site}/edit', [SiteController::class, 'edit'])->name('sites.edit');
+        Route::put('/sites/{site}', [SiteController::class, 'update'])->name('sites.update');
+        Route::delete('/sites/{site}', [SiteController::class, 'destroy'])->name('sites.destroy');
+        Route::post('/sites/{site}/test', [SiteController::class, 'test'])->name('sites.test');
+        Route::post('/sites/{site}/agents', [SiteController::class, 'assign'])->name('sites.assign');
+        Route::post('/sites/{site}/agents/{user}/status', [SiteController::class, 'assignmentStatus'])
+            ->name('sites.assignment-status');
+
         Route::get('/agents', [AgentController::class, 'index'])->name('agents.index');
         Route::get('/agents/create', [AgentController::class, 'create'])->name('agents.create');
         Route::post('/agents', [AgentController::class, 'store'])->name('agents.store');

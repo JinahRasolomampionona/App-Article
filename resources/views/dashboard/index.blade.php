@@ -29,9 +29,13 @@
                     Connectez un site pour récupérer ses catégories et ses articles, puis lancer
                     un premier audit de contenu.
                 </p>
-                <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">
+                @can('create', \App\Models\WordpressSite::class)
+                    <a href="{{ route('sites.create') }}" class="btn btn-primary btn-sm mt-3">
                     <i class="bi bi-plus-lg me-1" aria-hidden="true"></i> Connecter un site WordPress
                 </a>
+                @else
+                    <p class="ag-hint mt-2 mb-0">Aucun site ne vous est encore assigné : l’administrateur doit vous en assigner un.</p>
+                @endcan
 
             </div>
         </div>

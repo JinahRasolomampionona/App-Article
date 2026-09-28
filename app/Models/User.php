@@ -72,10 +72,10 @@ class User extends Authenticatable
         return $this->hasMany(WordpressSite::class);
     }
 
-    /** Connexions WordPress du compte : un site par connexion. */
-    public function siteConnections(): HasMany
+    /** Sites assignés au compte par l'Admin. */
+    public function siteAssignments(): HasMany
     {
-        return $this->hasMany(SiteConnection::class);
+        return $this->hasMany(SiteAgentAssignment::class);
     }
 
     public function settings(): HasOne

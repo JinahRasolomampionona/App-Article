@@ -7,6 +7,7 @@ use App\Jobs\AuditArticleJob;
 use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
+use App\Services\Audit\ArticleImageReport;
 use App\Services\Audit\AuditService;
 use App\Services\Audit\AuditSettings;
 use App\Services\QueueWorkerLauncher;
@@ -309,6 +310,25 @@ class ArticleController extends Controller
                 'metadata' => $issue->metadata,
             ])->all(),
             'last_audited_at' => $article->last_audited_at?->diffForHumans(),
+        ]);
+    }
+
+    /**
+     * Images de l'article (à la une + contenu) avec leur verdict de qualité,
+     * pour le modal ouvert depuis la miniature du tableau.
+     */
+    public function images(WordpressArticle $article, ArticleImageReport $report): JsonResponse
+    {
+        $this->authorize('view', $article);
+
+        $article->loadMissing('site.user');
+        $images = $report->build($article);
+
+        return response()->json([
+            'title' => $article->title,
+            'count' => count($images),
+            'edit_url' => route('articles.edit', $article),
+            'html' => view('articles.partials.images-list', ['images' => $images, 'article' => $article])->render(),
         ]);
     }
 

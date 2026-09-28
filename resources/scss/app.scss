@@ -569,6 +569,11 @@ html.ag-nav-collapsed .ag-sidebar {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.75rem;
 
+    // Espace agent : deux cartes seulement.
+    &--pair {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     @include media-breakpoint-down(md) {
         grid-template-columns: minmax(0, 1fr);
     }
@@ -866,6 +871,140 @@ html.ag-nav-collapsed .ag-sidebar {
     background: #f4f5f9;
     color: #525a6b;
     white-space: nowrap;
+}
+
+// --- Images d'un article (miniature du tableau + modal) ----------------------
+
+.ag-row-thumb {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    border: 1px solid var(--ag-border);
+    border-radius: 6px;
+    background: #f4f5f9;
+    color: var(--ag-muted);
+    overflow: visible;
+    transition: border-color 150ms ease, box-shadow 150ms ease;
+
+    img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: 5px;
+    }
+
+    // L'icône reste dessous : visible tant que l'image charge ou si elle échoue.
+    > .bi { font-size: 1rem; }
+
+    &:is(button):hover,
+    &:is(button):focus-visible {
+        border-color: var(--ag-primary);
+        box-shadow: 0 0 0 3px var(--ag-primary-soft);
+        outline: none;
+    }
+
+    &__count {
+        position: absolute;
+        right: -0.4rem;
+        bottom: -0.4rem;
+        min-width: 1.1rem;
+        padding: 0 0.25rem;
+        border-radius: 999px;
+        background: var(--ag-surface);
+        border: 1px solid var(--ag-border);
+        color: var(--ag-text);
+        font-size: 0.65rem;
+        font-weight: 600;
+        line-height: 1rem;
+        text-align: center;
+    }
+
+    &--alert &__count {
+        background: var(--ag-warning);
+        border-color: var(--ag-warning);
+        color: #fff;
+    }
+
+    &--broken { color: var(--ag-danger); }
+
+    &--empty {
+        border-style: dashed;
+        background: transparent;
+        opacity: 0.6;
+    }
+}
+
+.ag-image-report {
+    display: grid;
+    gap: 0.75rem;
+
+    &__item {
+        display: grid;
+        grid-template-columns: 9rem minmax(0, 1fr);
+        gap: 0.875rem;
+        margin: 0;
+        padding: 0.625rem;
+        border: 1px solid var(--ag-border);
+        border-radius: 8px;
+        background: var(--ag-surface);
+
+        @media (max-width: 575.98px) {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    &__preview {
+        position: relative;
+        aspect-ratio: 4 / 3;
+        border-radius: 6px;
+        background: #f4f5f9;
+        overflow: hidden;
+
+        a, img {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        img { object-fit: cover; }
+    }
+
+    &__fallback {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.25rem;
+        color: var(--ag-danger);
+        font-size: 0.75rem;
+
+        &[hidden] { display: none; }
+
+        .bi { font-size: 1.5rem; }
+    }
+
+    &__index {
+        position: absolute;
+        top: 0.375rem;
+        left: 0.375rem;
+        padding: 0 0.4rem;
+        border-radius: 999px;
+        background: rgba(31, 36, 48, 0.7);
+        color: #fff;
+        font-size: 0.7rem;
+        font-weight: 600;
+        line-height: 1.2rem;
+    }
+
+    &__body { min-width: 0; }
 }
 
 // --- Filtres -----------------------------------------------------------------
