@@ -239,7 +239,7 @@ class ArticleLockTest extends TestCase
             ->get(route('articles.edit', $article))
             ->assertOk()
             ->assertSee('data-readonly="0"', false)
-            ->assertSee('Terminer la correction')
+            ->assertDontSee('Terminer la correction')
             ->assertSee('Libérer l’article');
     }
 
@@ -294,16 +294,43 @@ class ArticleLockTest extends TestCase
         $rows = collect(explode('<tr data-article-id=', $html))->slice(1)->keyBy(fn ($row) => (int) trim(strtok($row, '>'), '"'));
 
         $this->assertStringContainsString('ag-status-select', $rows[$free->id]);
-        $this->assertStringNotContainsString('disabled', explode('</select>', explode('ag-status-select', $rows[$free->id])[1])[0]);
+        // Le sélecteur reste actif, seule l'option « Corrigé » attend un agent.
+        $freeSelect = explode('</select>', explode('<select', $rows[$free->id])[1])[0];
+        $this->assertStringNotContainsString('disabled', strtok($freeSelect, '>'));
+        $this->assertMatchesRegularExpression('/<option value="fixed"[^>]*disabled/', $freeSelect);
+        $this->assertStringContainsString('Corrigé (assignez un agent)', $freeSelect);
         $this->assertStringContainsString('ag-status-select', $rows[$taken->id]);
         $this->assertStringContainsString('title="En cours par Daniella"', $rows[$taken->id]);
+    }
+
+    public function test_un_article_non_assigne_ne_peut_pas_etre_declare_corrige(): void
+    {
+        $article = $this->article(['audit_status' => WordpressArticle::AUDIT_NEEDS_FIX, 'issues_count' => 1]);
+
+        foreach ([$this->jinah, $this->admin] as $user) {
+            $this->actingAs($user)
+                ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
+                ->assertStatus(422)
+                ->assertJsonPath('message', 'Cet article n’est assigné à aucun agent : assignez-le avant de le déclarer corrigé.');
+        }
+
+        // Verrou expiré : l'article n'est plus assigné.
+        $this->lockFor($article, $this->jinah, minutes: 5);
+        $this->travel(6)->minutes();
+        $this->actingAs($this->jinah)
+            ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
+            ->assertStatus(422);
+
+        $this->assertSame(WordpressArticle::AUDIT_NEEDS_FIX, $article->fresh()->audit_status);
+        $this->assertSame(0, ArticleStatusHistory::count());
     }
 
     public function test_declarer_corrige_credite_l_agent_et_revenir_retire_la_correction(): void
     {
         $article = $this->article(['audit_status' => WordpressArticle::AUDIT_NEEDS_FIX, 'issues_count' => 1]);
 
-        // Article non pris : Jinah peut déclarer son statut directement.
+        // Jinah prend l'article, puis le déclare corrigé.
+        $this->actingAs($this->jinah)->postJson(route('articles.take', $article))->assertOk();
         $this->actingAs($this->jinah)
             ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
             ->assertOk();

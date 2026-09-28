@@ -13,7 +13,6 @@
      data-heartbeat-seconds="{{ $heartbeatSeconds }}"
      data-take-url="{{ route('articles.take', $article) }}"
      data-release-url="{{ route('articles.release', $article) }}"
-     data-finish-url="{{ route('articles.finish', $article) }}"
      data-index-url="{{ route('articles.index', ['site' => $article->wordpress_site_id]) }}">
     <div class="ag-card__header">
         <h2 class="ag-card__title">Prise en charge</h2>
@@ -48,17 +47,10 @@
                 @endif
             </p>
             <div class="d-grid gap-2" data-lock-actions>
-                <button type="button" class="btn btn-success" data-finish
-                        @disabled(! $article->site->hasCredentials())>
-                    <i class="bi bi-check2-circle me-1" aria-hidden="true"></i> Terminer la correction
-                </button>
                 <button type="button" class="btn btn-outline-secondary" data-release>
                     <i class="bi bi-unlock me-1" aria-hidden="true"></i> Libérer l’article
                 </button>
             </div>
-            <p class="ag-hint mt-2 mb-0">
-                « Terminer » enregistre vos modifications, relance l’audit puis libère l’article.
-            </p>
         @elseif($lockState === 'other')
             <p class="small mb-2">
                 <strong>{{ $article->activeAgentName() }}</strong> travaille sur cet article

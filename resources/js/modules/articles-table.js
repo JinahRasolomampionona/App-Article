@@ -414,6 +414,20 @@ export function initArticlesTable() {
         row.classList.add('ag-row-flash');
     }
 
+    /**
+     * « Corrigé » n'est sélectionnable que si un agent détient l'article
+     * (règle vérifiée côté serveur ; ceci n'évite qu'un refus inutile).
+     */
+    function syncFixedOption(row, state) {
+        const option = row?.querySelector('[data-status-url] option[value="fixed"]');
+
+        if (!option || option.selected) return;
+
+        const needsAgent = !state.agent_id;
+        option.disabled = needsAgent;
+        option.textContent = needsAgent ? 'Corrigé (assignez un agent)' : 'Corrigé';
+    }
+
     const pollUrl = root.dataset.pollUrl;
     const pollDelay = Math.max(5, Number(root.dataset.pollSeconds || 8)) * 1000;
     let polling = false;
@@ -436,7 +450,9 @@ export function initArticlesTable() {
             const data = await http.get(`${pollUrl}?${params.toString()}`);
 
             Object.entries(data.articles ?? {}).forEach(([id, state]) => {
-                applyCells(body.querySelector(`tr[data-article-id="${id}"]`), state);
+                const row = body.querySelector(`tr[data-article-id="${id}"]`);
+                applyCells(row, state);
+                syncFixedOption(row, state);
             });
         } catch {
             // Sondage silencieux : une coupure réseau passagère ne mérite pas

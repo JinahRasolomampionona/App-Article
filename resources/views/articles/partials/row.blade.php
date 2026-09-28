@@ -112,7 +112,11 @@
                     @disabled(! $canSetStatus)
                     @unless($canSetStatus) title="En cours par {{ $article->activeAgentName() }}" @endunless>
                 @foreach(\App\Models\WordpressArticle::manualStatuses() as $value => $label)
-                    <option value="{{ $value }}" @selected($article->audit_status === $value)>{{ $label }}</option>
+                    {{-- « Corrigé » seulement pour un article assigné à un agent. --}}
+                    @php $needsAgent = $value === \App\Models\WordpressArticle::AUDIT_FIXED && ! $article->isLocked() && $article->audit_status !== $value; @endphp
+                    <option value="{{ $value }}" @selected($article->audit_status === $value) @disabled($needsAgent)>
+                        {{ $label }}{{ $needsAgent ? ' (assignez un agent)' : '' }}
+                    </option>
                 @endforeach
             </select>
         @elseif($article->statusLabel())

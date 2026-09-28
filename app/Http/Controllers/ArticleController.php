@@ -228,6 +228,15 @@ class ArticleController extends Controller
             ], 422);
         }
 
+        // « Corrigé » exige un agent : un article non assigné n'a personne à
+        // qui créditer la correction.
+        if ($validated['status'] === WordpressArticle::AUDIT_FIXED && ! $article->isLocked()) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Cet article n’est assigné à aucun agent : assignez-le avant de le déclarer corrigé.',
+            ], 422);
+        }
+
         // La correction déclarée est créditée, dans les statistiques, au
         // compte qui la déclare.
         $article->applyManualStatus($validated['status'], $request->user());
