@@ -448,8 +448,12 @@ class WordpressArticle extends Model
     }
 
     /**
-     * Filtre par agent actif. `none` isole les articles disponibles — ceux à
-     * répartir —, un identifiant de compte ceux qu'il traite en ce moment.
+     * Filtre par agent : tous les articles d'un agent, quel que soit leur
+     * statut — ceux qu'il traite en ce moment (« À corriger » ou
+     * « À vérifier ») et ceux qu'il a déclarés « Corrigé ». Le filtre de
+     * statut affine ensuite la sélection.
+     *
+     * `none` isole les articles à répartir : ni pris, ni déjà corrigés.
      *
      * @param  Builder<WordpressArticle>  $query
      * @return Builder<WordpressArticle>
@@ -461,9 +465,14 @@ class WordpressArticle extends Model
         }
 
         if ($agent === 'none') {
-            return $query->available();
+            return $query->available()->whereNull('completed_at');
         }
 
-        return $query->locked()->where('assigned_to', (int) $agent);
+        $agentId = (int) $agent;
+
+        return $query->where(function (Builder $q) use ($agentId) {
+            $q->where(fn (Builder $held) => $held->locked()->where('assigned_to', $agentId))
+                ->orWhere('completed_by', $agentId);
+        });
     }
 }

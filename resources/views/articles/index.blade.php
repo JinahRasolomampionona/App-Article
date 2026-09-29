@@ -71,11 +71,13 @@
                 <div class="col-6 col-lg-2">
                     <label for="ag-agent" class="form-label">Agent</label>
                     <select id="ag-agent" name="agent" class="form-select">
+                        {{-- Un agent = tous ses articles (en cours et corrigés) ;
+                             le filtre Statut affine (À corriger, À vérifier…). --}}
                         <option value="">Tous</option>
-                        <option value="none" @selected($filters['agent'] === 'none')>Disponibles</option>
-                        <option value="{{ auth()->id() }}" @selected($filters['agent'] === auth()->id())>En cours par moi</option>
+                        <option value="none" @selected($filters['agent'] === 'none')>Non assignés</option>
+                        <option value="{{ auth()->id() }}" @selected($filters['agent'] === auth()->id())>{{ auth()->user()->name }} (vous)</option>
                         @foreach($agents->where('id', '!=', auth()->id()) as $agent)
-                            <option value="{{ $agent->id }}" @selected($filters['agent'] === $agent->id)>En cours par {{ $agent->name }}</option>
+                            <option value="{{ $agent->id }}" @selected($filters['agent'] === $agent->id)>{{ $agent->name }}</option>
                         @endforeach
                     </select>
                 </div>

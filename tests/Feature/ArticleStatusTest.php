@@ -284,6 +284,51 @@ class ArticleStatusTest extends TestCase
         $see('fixed')->assertSee('Article corrigé')->assertDontSee('Article à corriger')->assertDontSee('Article à vérifier');
     }
 
+    /**
+     * Le filtre Agent couvre tous les articles de l'agent — en cours
+     * (« À corriger », « À vérifier ») et « Corrigé » —, et se combine avec
+     * le filtre Statut.
+     */
+    public function test_le_filtre_agent_couvre_tous_les_statuts_de_l_agent(): void
+    {
+        $this->lockFor($this->articleWithIssue(['title' => 'Jinah à corriger']), $this->agent);
+        $this->lockFor($this->articleWithoutIssue(['title' => 'Jinah à vérifier']), $this->agent);
+        $this->complete($this->articleWithIssue(['title' => 'Jinah corrigé']), $this->agent);
+
+        $daniella = User::factory()->create(['name' => 'Daniella']);
+        $this->assignSite($daniella, $this->site);
+        $this->lockFor($this->articleWithIssue(['title' => 'Daniella à corriger']), $daniella);
+        $this->articleWithIssue(['title' => 'Article libre']);
+
+        $list = fn (array $query) => $this->actingAs($this->admin)
+            ->get(route('articles.index', ['site' => $this->site->id] + $query))
+            ->assertOk();
+
+        $list(['agent' => $this->agent->id])
+            ->assertSee('Jinah à corriger')
+            ->assertSee('Jinah à vérifier')
+            ->assertSee('Jinah corrigé')
+            ->assertDontSee('Daniella à corriger')
+            ->assertDontSee('Article libre');
+
+        $list(['agent' => $this->agent->id, 'status' => 'to_review'])
+            ->assertSee('Jinah à vérifier')
+            ->assertDontSee('Jinah à corriger')
+            ->assertDontSee('Jinah corrigé');
+
+        $list(['agent' => $this->agent->id, 'status' => 'fixed'])
+            ->assertSee('Jinah corrigé')
+            ->assertDontSee('Jinah à corriger');
+
+        $list(['agent' => 'none'])
+            ->assertSee('Article libre')
+            ->assertDontSee('Jinah corrigé')
+            ->assertDontSee('Daniella à corriger');
+
+        // Libellés : le nom de l'agent seul, plus « En cours par ».
+        $list([])->assertSee('>Jinah</option>', false)->assertDontSee('En cours par Jinah</option>', false);
+    }
+
     public function test_le_tableau_affiche_un_selecteur_et_le_filtre_a_verifier(): void
     {
         $this->articleWithIssue();
