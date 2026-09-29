@@ -7,12 +7,12 @@ use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
 use App\Policies\UserPolicy;
 use App\Policies\WordpressArticlePolicy;
-use App\Support\AgentCatalog;
 use App\Policies\WordpressSitePolicy;
 use App\Services\Audit\AuditService;
 use App\Services\Audit\Relevance\HeuristicImageRelevanceAnalyzer;
 use App\Services\Audit\Relevance\ImageRelevanceAnalyzerInterface;
 use App\Services\Audit\Relevance\NullImageRelevanceAnalyzer;
+use App\Services\Audit\Rules\AuditRule;
 use App\Services\Audit\Rules\BodyImageRule;
 use App\Services\Audit\Rules\BrokenImageRule;
 use App\Services\Audit\Rules\FeaturedImageRule;
@@ -25,6 +25,7 @@ use App\Services\Audit\Rules\ShortcodeRule;
 use App\Services\QueueHealth;
 use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
+use App\Support\AgentCatalog;
 use Illuminate\Pagination\Paginator;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
@@ -42,7 +43,7 @@ class AppServiceProvider extends ServiceProvider
      * les règles réseau, afin que les remarques les plus rapides à obtenir
      * soient produites en premier.
      *
-     * @var array<int, class-string<\App\Services\Audit\Rules\AuditRule>>
+     * @var array<int, class-string<AuditRule>>
      */
     protected array $auditRules = [
         FeaturedImageRule::class,
@@ -101,7 +102,7 @@ class AppServiceProvider extends ServiceProvider
                 // Compté une fois par requête : la sidebar est rendue deux fois
                 // (version fixe et version offcanvas).
                 'navNeedsFix' => $current
-                    ? $current->articles()->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX)->count()
+                    ? $current->articles()->withDisplayStatus(WordpressArticle::AUDIT_NEEDS_FIX)->count()
                     : 0,
                 // Une file sans worker ne produit ni articles ni audits : il
                 // vaut mieux l'annoncer que laisser l'utilisateur attendre.

@@ -34,6 +34,7 @@ class ArticleStatusHistory extends Model
         'agent',
         'agent_user_id',
         'issues_resolved',
+        'resolved_issues',
         'recorded_at',
     ];
 
@@ -42,6 +43,7 @@ class ArticleStatusHistory extends Model
         return [
             'wp_id' => 'integer',
             'issues_resolved' => 'integer',
+            'resolved_issues' => 'array',
             'resolved_manually' => 'boolean',
             'recorded_at' => 'datetime',
         ];

@@ -121,10 +121,10 @@ class CorrectionStatsTest extends TestCase
         $forged = new StatisticsFilter(viewer: $jinah, agent: $daniella->id);
         $this->assertSame(1, $day($this->stats->series($forged, 'day')));
 
+        // Les statistiques sont réservées à l'Admin : un Agent est refusé.
         $this->actingAs($jinah)
             ->getJson(route('statistics.series', ['granularity' => 'day', 'agent' => $daniella->id]))
-            ->assertOk()
-            ->assertJsonPath('summary.articles', 1);
+            ->assertForbidden();
     }
 
     public function test_la_serie_couvre_une_periode_continue_sans_trou(): void

@@ -35,6 +35,12 @@
            data-bs-toggle="tooltip" title="Consultation seule : en cours par {{ $article->activeAgentName() }}">
             <i class="bi bi-eye me-1" aria-hidden="true"></i>Voir
         </a>
+    @elseif($article->isCompleted() && ! $me->isAdmin())
+        {{-- Déclaré corrigé : seul l'Admin peut le rendre à un agent. --}}
+        <a href="{{ route('articles.edit', $article) }}" class="btn btn-sm btn-outline-secondary"
+           data-bs-toggle="tooltip" title="Consultation seule : article déclaré corrigé">
+            <i class="bi bi-eye me-1" aria-hidden="true"></i>Voir
+        </a>
     @else
         <button type="button" class="btn btn-sm btn-outline-primary"
                 data-take-url="{{ route('articles.take', $article) }}"

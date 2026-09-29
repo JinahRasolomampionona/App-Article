@@ -5,59 +5,39 @@ namespace App\Services\Stats;
 use App\Models\ArticleStatusHistory;
 use App\Models\User;
 use App\Models\WordpressArticle;
-use App\Services\Assignment\ArticleLockService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Inscrit dans l'historique un article qui vient d'atteindre « OK » ou
- * « Corrigé ».
+ * Historique des corrections.
  *
- * Seul un *changement* de statut est enregistré : réauditer dix fois un
- * article déjà conforme ne doit pas gonfler les statistiques. La détection a
- * donc besoin du statut précédent, que les appelants fournissent avant
- * d'écrire le nouveau.
- *
- * La correction est attribuée à l'agent qui détient l'article, ou à défaut au
- * dernier agent qui l'a traité : l'audit réseau, en file d'attente, peut
- * confirmer la correction quelques instants après la libération.
+ * Une entrée est créée lorsqu'un agent déclare un article « Corrigé » : elle
+ * porte son nom et la liste des erreurs qu'il a corrigées. L'audit, lui, ne
+ * crédite personne — il se contente de constater l'état de l'article.
  */
 class StatisticsRecorder
 {
-    /** Statuts qui valent correction, et donc entrée d'historique. */
+    /** Statuts qui valent correction lors de la reprise initiale. */
     protected const RECORDED = [WordpressArticle::AUDIT_OK, WordpressArticle::AUDIT_FIXED];
 
-    public function __construct(
-        protected ArticleLockService $locks,
-    ) {}
-
-    public function record(
-        WordpressArticle $article,
-        ?string $previousStatus,
-        string $status,
-        bool $manual = false,
-        int $issuesResolved = 0,
-        ?User $agent = null,
-    ): ?ArticleStatusHistory {
-        if (! in_array($status, self::RECORDED, true) || $status === $previousStatus) {
-            return null;
-        }
-
+    /**
+     * Inscrit la fin de traitement d'un article (« Corrigé » déclaré par
+     * l'agent) avec la liste des erreurs corrigées : c'est ce que l'Admin
+     * relit avant de valider ou de réassigner.
+     *
+     * @param  array<int, array{type: string, message: string, how: string}>  $issues
+     */
+    public function recordCompletion(WordpressArticle $article, User $agent, array $issues): ?ArticleStatusHistory
+    {
         $site = $article->site;
 
         if ($site === null) {
-            // Article orphelin : sans site, l'entrée serait inexploitable.
             Log::warning('Statistiques : article sans site, historique ignoré.', [
                 'article_id' => $article->id,
             ]);
 
             return null;
         }
-
-        // Agent au moment de la correction : celui qui la déclare, sinon celui
-        // qui traite l'article. L'historique reste juste même si l'article est
-        // repris ensuite par quelqu'un d'autre.
-        $agent ??= $this->locks->responsibleAgent($article);
 
         return ArticleStatusHistory::create([
             'user_id' => $site->user_id,
@@ -68,49 +48,14 @@ class StatisticsRecorder
             'wp_id' => $article->wp_id,
             'article_title' => $article->title,
             'article_url' => $article->link,
-            'status' => $status,
-            'resolved_manually' => $manual,
-            'agent' => $agent?->name,
-            'agent_user_id' => $agent?->id,
-            'issues_resolved' => $issuesResolved,
+            'status' => WordpressArticle::AUDIT_FIXED,
+            'resolved_manually' => true,
+            'agent' => $agent->name,
+            'agent_user_id' => $agent->id,
+            'issues_resolved' => count($issues),
+            'resolved_issues' => $issues,
             'recorded_at' => now(),
         ]);
-    }
-
-    /**
-     * Annule la dernière correction déclarée à la main d'un article qui repasse
-     * « À corriger » : une déclaration retirée ne doit plus compter dans les
-     * statistiques. Une correction confirmée par un audit n'est jamais retirée.
-     *
-     * Une correction créditée à un agent lui reste acquise quand quelqu'un
-     * d'autre ($by, l'Admin par exemple) repasse l'article « À corriger » après
-     * qu'il l'a quitté (libéré par lui, par l'Admin, ou expiré). Elle n'est
-     * retirée que si l'agent annule lui-même sa déclaration, ou si l'article
-     * est encore entre ses mains (erreur de saisie corrigée sur le moment).
-     */
-    public function retractManualCorrection(WordpressArticle $article, ?User $by = null): bool
-    {
-        $last = ArticleStatusHistory::query()
-            ->where('wordpress_article_id', $article->id)
-            ->orderByDesc('recorded_at')
-            ->orderByDesc('id')
-            ->first();
-
-        if ($last === null || ! $last->resolved_manually || $last->status !== WordpressArticle::AUDIT_FIXED) {
-            return false;
-        }
-
-        $credited = $last->agent_user_id !== null ? (int) $last->agent_user_id : null;
-        $article->refresh();
-
-        $ownUndo = $credited === null || ($by !== null && $by->id === $credited);
-        $stillHeld = $article->isLocked() && (int) $article->assigned_to === $credited;
-
-        if (! $ownUndo && ! $stillHeld) {
-            return false;
-        }
-
-        return (bool) $last->delete();
     }
 
     /**

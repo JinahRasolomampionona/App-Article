@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers;
 
-use App\Jobs\AuditArticleJob;
 use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Services\Assignment\ArticleLockedException;
@@ -197,8 +196,8 @@ class ArticleLockController extends Controller
         $articles = WordpressArticle::query()
             ->whereIn('id', $validated['ids'])
             ->whereHas('site', fn ($query) => $query->accessibleBy($user))
-            ->with('assignee:id,name')
-            ->get(['id', 'title', 'wordpress_site_id', 'audit_status', 'assigned_to', 'locked_at', 'lock_expires_at']);
+            ->with(['assignee:id,name', 'completer:id,name'])
+            ->get(['id', 'title', 'wordpress_site_id', 'audit_status', 'assigned_to', 'locked_at', 'lock_expires_at', 'completed_at', 'completed_by']);
 
         return response()->json([
             'ok' => true,
@@ -212,6 +211,11 @@ class ArticleLockController extends Controller
                     'key' => $article->lockStateFor($user).':'.($article->activeAgentId() ?? 0),
                     'agent_html' => view('articles.partials.agent-cell', ['article' => $article])->render(),
                     'actions_html' => view('articles.partials.actions-cell', ['article' => $article])->render(),
+                    // Le sélecteur de statut dépend du détenteur : « Corrigé »
+                    // n'est possible que sur un article assigné.
+                    'completed' => $article->isCompleted(),
+                    'status_key' => $article->displayStatus().':'.($article->activeAgentId() ?? 0),
+                    'status_html' => view('articles.partials.status-cell', ['article' => $article])->render(),
                 ],
             ]),
         ]);
@@ -255,7 +259,7 @@ class ArticleLockController extends Controller
             // Ligne complète : le statut manuel n'est modifiable que par le
             // détenteur, il change donc avec la prise en charge.
             'row' => view('articles.partials.row', [
-                'article' => $fresh->load(['categories:id,name', 'openIssues']),
+                'article' => $fresh->load(WordpressArticle::ROW_RELATIONS),
             ])->render(),
         ];
     }

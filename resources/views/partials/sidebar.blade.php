@@ -7,19 +7,20 @@
     $scope = $navScope ?? 'main';
 
     // Les pages d'administration ne sont proposées qu'à l'Admin ; les routes
-    // elles-mêmes sont protégées côté serveur (porte « admin »).
+    // elles-mêmes sont protégées côté serveur (porte « admin »). Un agent ne
+    // voit que « Articles » et « Sites WordPress ».
     $sections = [
         [
             'key' => 'articleguard',
             'label' => 'ArticleGuard',
             'badge' => $needsFix,
             'links' => array_values(array_filter([
-                [
+                $isAdmin ? [
                     'href' => route('dashboard'),
                     'icon' => 'bi-grid-1x2',
                     'label' => 'Dashboard',
                     'active' => request()->routeIs('dashboard'),
-                ],
+                ] : null,
                 [
                     'href' => route('articles.index'),
                     'icon' => 'bi-file-text',
@@ -28,24 +29,24 @@
                     'badge' => $needsFix,
                     'badgeTitle' => $needsFix.' article(s) à corriger',
                 ],
-                [
+                $isAdmin ? [
                     'href' => route('audits.index'),
                     'icon' => 'bi-clipboard-check',
                     'label' => 'Audits',
                     'active' => request()->routeIs('audits.*'),
-                ],
+                ] : null,
                 [
                     'href' => route('sites.index'),
                     'icon' => 'bi-globe2',
                     'label' => 'Sites WordPress',
                     'active' => request()->routeIs('sites.*'),
                 ],
-                [
+                $isAdmin ? [
                     'href' => route('statistics.index'),
                     'icon' => 'bi-bar-chart-line',
-                    'label' => $isAdmin ? 'Statistiques' : 'Mes statistiques',
+                    'label' => 'Statistiques',
                     'active' => request()->routeIs('statistics.*'),
-                ],
+                ] : null,
             ])),
         ],
     ];
@@ -72,7 +73,7 @@
     }
 @endphp
 
-<a href="{{ route('dashboard') }}" class="ag-brand">
+<a href="{{ $isAdmin ? route('dashboard') : route('articles.index') }}" class="ag-brand">
     <span class="ag-brand__mark" aria-hidden="true"><i class="bi bi-shield-check"></i></span>
     <span>
         <span class="ag-brand__name d-block">{{ config('articleguard.name') }}</span>

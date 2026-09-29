@@ -7,7 +7,6 @@ use App\Models\ArticleStatusHistory;
 use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
-use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
@@ -67,48 +66,55 @@ class ArticleStatisticsService
     }
 
     /**
-     * Statistiques personnelles d'un agent.
+     * Les quatre cartes du Dashboard et des Statistiques, selon le statut
+     * affiché dans « Articles » : une carte mène au tableau filtré sur le
+     * même statut, les deux chiffres doivent donc être calculés pareil.
      *
-     * « En cours » = articles qu'il a pris et qui sont encore « À corriger » :
-     * passer l'un d'eux en « Corrigé » le retire des « En cours » et l'ajoute
-     * aux « Articles corrigés » (historique).
-     *
-     * @return array{corrected: int, ok: int, fixed: int, in_progress: int, week: int, month: int, completed: int, last_activity: ?Carbon}
+     * @param  int|null  $siteId  `null` : tous les sites
+     * @return array{total: int, needs_fix: int, to_review: int, fixed: int, pending: int}
      */
-    public function agentOverview(StatisticsFilter $filter): array
+    public function statusCards(?int $siteId): array
     {
-        $agentId = $filter->agentId() ?? $filter->viewer->id;
-        $now = CarbonImmutable::now();
-
-        $history = ArticleStatusHistory::query()
-            ->where('agent_user_id', $agentId)
-            ->when($filter->siteId, fn (Builder $q) => $q->where('wordpress_site_id', $filter->siteId));
-
-        $row = (clone $history)
+        $row = WordpressArticle::query()
+            ->when($siteId, fn (Builder $q) => $q->where('wordpress_site_id', $siteId))
             ->selectRaw('count(*) as total')
-            ->selectRaw('sum(case when status = ? then 1 else 0 end) as ok', [WordpressArticle::AUDIT_OK])
-            ->selectRaw('sum(case when status = ? then 1 else 0 end) as fixed', [WordpressArticle::AUDIT_FIXED])
+            ->selectRaw('sum(case when completed_at is not null then 1 else 0 end) as done')
+            ->selectRaw('sum(case when completed_at is null and audit_status = ? then 1 else 0 end) as needs_fix', [WordpressArticle::AUDIT_NEEDS_FIX])
+            ->selectRaw('sum(case when completed_at is null and audit_status in (?, ?) then 1 else 0 end) as to_review', [WordpressArticle::AUDIT_OK, WordpressArticle::AUDIT_FIXED])
+            ->selectRaw('sum(case when completed_at is null and audit_status = ? then 1 else 0 end) as pending', [WordpressArticle::AUDIT_PENDING])
             ->first();
 
-        $locked = WordpressArticle::query()
-            ->locked()
-            ->where('assigned_to', $agentId)
-            ->when($filter->siteId, fn (Builder $q) => $q->where('wordpress_site_id', $filter->siteId));
-
         return [
-            'corrected' => (int) ($row->total ?? 0),
-            'ok' => (int) ($row->ok ?? 0),
-            'fixed' => (int) ($row->fixed ?? 0),
-            'in_progress' => (clone $locked)->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX)->count(),
-            'week' => (clone $history)->where('recorded_at', '>=', $now->startOfWeek())->count(),
-            'month' => (clone $history)->where('recorded_at', '>=', $now->startOfMonth())->count(),
-            'completed' => ArticleAssignment::query()
-                ->where('user_id', $agentId)
-                ->whereNotNull('completed_at')
-                ->when($filter->siteId, fn (Builder $q) => $q->where('wordpress_site_id', $filter->siteId))
-                ->count(),
-            'last_activity' => $this->lastActivity($agentId),
+            'total' => (int) ($row->total ?? 0),
+            'needs_fix' => (int) ($row->needs_fix ?? 0),
+            'to_review' => (int) ($row->to_review ?? 0),
+            'fixed' => (int) ($row->done ?? 0),
+            'pending' => (int) ($row->pending ?? 0),
         ];
+    }
+
+    /**
+     * Articles d'un agent pour la vue « Voir » de l'Admin : ceux qu'il traite
+     * en ce moment et ceux qu'il a déclarés corrigés, tous sites confondus
+     * (ou sur le site filtré).
+     *
+     * @return LengthAwarePaginator<int, WordpressArticle>
+     */
+    public function agentArticles(User $agent, ?int $siteId, int $perPage = 20): LengthAwarePaginator
+    {
+        return WordpressArticle::query()
+            ->when($siteId, fn (Builder $q) => $q->where('wordpress_site_id', $siteId))
+            ->where(function (Builder $q) use ($agent) {
+                $q->where('completed_by', $agent->id)
+                    ->orWhere(fn (Builder $inner) => $inner->locked()->where('assigned_to', $agent->id));
+            })
+            ->with(['site:id,name,url', 'openIssues:id,wordpress_article_id,rule_type,severity,message', 'notes.author:id,name', 'assignee:id,name'])
+            // En cours d'abord, puis les corrections les plus récentes.
+            ->orderByRaw('case when completed_at is null then 0 else 1 end')
+            ->orderByDesc('completed_at')
+            ->orderByDesc('locked_at')
+            ->paginate($perPage)
+            ->withQueryString();
     }
 
     /**
@@ -206,83 +212,6 @@ class ArticleStatisticsService
     }
 
     /**
-     * Articles restant à corriger, les plus chargés en premier.
-     *
-     * Avec un filtre d'agent — toujours le cas pour un Agent —, ce sont les
-     * articles qu'il a en main ; `none` isole ceux que personne n'a pris.
-     *
-     * @return LengthAwarePaginator<int, WordpressArticle>
-     */
-    public function pendingArticles(StatisticsFilter $filter, int $perPage = 10): LengthAwarePaginator
-    {
-        return $this->articles($filter)
-            ->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX)
-            ->with(['site:id,name,url', 'assignee:id,name'])
-            ->orderByDesc('issues_count')
-            ->orderByDesc('last_audited_at')
-            ->paginate($perPage, ['*'], 'pending_page')
-            ->withQueryString();
-    }
-
-    /**
-     * Articles en cours de traitement, les plus anciennes prises d'abord.
-     *
-     * $onlyToFix (espace agent) : seulement ceux encore « À corriger », comme
-     * la carte « En cours » de l'agent.
-     *
-     * @return LengthAwarePaginator<int, WordpressArticle>
-     */
-    public function inProgressArticles(StatisticsFilter $filter, int $perPage = 10, bool $onlyToFix = false): LengthAwarePaginator
-    {
-        return $this->articles($filter)
-            ->locked()
-            ->when($onlyToFix, fn (Builder $q) => $q->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX))
-            ->with(['site:id,name,url', 'assignee:id,name'])
-            ->orderBy('locked_at')
-            ->paginate($perPage, ['*'], 'progress_page')
-            ->withQueryString();
-    }
-
-    /**
-     * Historique des corrections, sites supprimés compris.
-     *
-     * @return LengthAwarePaginator<int, ArticleStatusHistory>
-     */
-    public function history(StatisticsFilter $filter, int $perPage = 15): LengthAwarePaginator
-    {
-        return $this->historyQuery($filter)
-            ->orderByDesc('recorded_at')
-            ->orderByDesc('id')
-            ->paginate($perPage, ['*'], 'history_page')
-            ->withQueryString();
-    }
-
-    /**
-     * Totaux de l'historique, indépendants de l'état courant : ils incluent
-     * les sites supprimés.
-     *
-     * @return array{total: int, ok: int, fixed: int, manual: int, sites: int}
-     */
-    public function historyTotals(StatisticsFilter $filter): array
-    {
-        $row = $this->historyQuery($filter)
-            ->selectRaw('count(*) as total')
-            ->selectRaw('sum(case when status = ? then 1 else 0 end) as ok', [WordpressArticle::AUDIT_OK])
-            ->selectRaw('sum(case when status = ? then 1 else 0 end) as fixed', [WordpressArticle::AUDIT_FIXED])
-            ->selectRaw('sum(case when resolved_manually = 1 then 1 else 0 end) as manual')
-            ->selectRaw('count(distinct site_name) as sites')
-            ->first();
-
-        return [
-            'total' => (int) ($row->total ?? 0),
-            'ok' => (int) ($row->ok ?? 0),
-            'fixed' => (int) ($row->fixed ?? 0),
-            'manual' => (int) ($row->manual ?? 0),
-            'sites' => (int) ($row->sites ?? 0),
-        ];
-    }
-
-    /**
      * Corrections, articles en cours et dernière activité par agent.
      * Réservé à l'Admin.
      *
@@ -357,29 +286,6 @@ class ArticleStatisticsService
     }
 
     /**
-     * Base commune à l'historique et à ses totaux, pour que le résumé affiché
-     * corresponde toujours aux lignes listées.
-     *
-     * @return Builder<ArticleStatusHistory>
-     */
-    protected function historyQuery(StatisticsFilter $filter): Builder
-    {
-        $agent = $filter->agent();
-
-        return ArticleStatusHistory::query()
-            ->when($filter->siteId, fn (Builder $query) => $query->where('wordpress_site_id', $filter->siteId))
-            ->when(
-                in_array($filter->status, [WordpressArticle::AUDIT_OK, WordpressArticle::AUDIT_FIXED], true),
-                fn (Builder $query) => $query->where('status', $filter->status),
-            )
-            ->when($filter->from, fn (Builder $query) => $query->where('recorded_at', '>=', $filter->from))
-            ->when($filter->to, fn (Builder $query) => $query->where('recorded_at', '<=', $filter->to))
-            // `none` isole les corrections faites hors prise en charge.
-            ->when($agent === 'none', fn (Builder $query) => $query->whereNull('agent_user_id')->whereNull('agent'))
-            ->when(is_int($agent), fn (Builder $query) => $query->where('agent_user_id', $agent));
-    }
-
-    /**
      * Articles de l'espace, restreints par le site et l'agent du filtre.
      *
      * @return Builder<WordpressArticle>
@@ -392,20 +298,6 @@ class ArticleStatisticsService
             ->when($filter->siteId, fn (Builder $q) => $q->where('wordpress_site_id', $filter->siteId))
             ->when($agent === 'none', fn (Builder $q) => $q->available())
             ->when(is_int($agent), fn (Builder $q) => $q->locked()->where('assigned_to', $agent));
-    }
-
-    protected function lastActivity(int $userId): ?Carbon
-    {
-        $assignment = ArticleAssignment::query()
-            ->where('user_id', $userId)
-            ->selectRaw('max(taken_at) as taken, max(released_at) as released')
-            ->first();
-
-        $history = ArticleStatusHistory::query()
-            ->where('agent_user_id', $userId)
-            ->max('recorded_at');
-
-        return $this->latest([$assignment->taken ?? null, $assignment->released ?? null, $history]);
     }
 
     /**

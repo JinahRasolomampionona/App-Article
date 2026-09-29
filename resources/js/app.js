@@ -7,6 +7,8 @@ import { initDonuts } from './modules/donut.js';
 import { initCorrectionsChart } from './modules/corrections-chart.js';
 import { initNavGroups, initSidebarRail } from './modules/nav.js';
 import { initPasswordToggles } from './modules/password-toggle.js';
+import { initReassign } from './modules/reassign.js';
+import { initAuditHistory } from './modules/audit-history.js';
 import { notify } from './modules/toast.js';
 
 // Certaines vues instancient des composants Bootstrap (tooltips, modals) ;
@@ -25,6 +27,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initDonuts();
     initCorrectionsChart();
     initPasswordToggles();
+    initReassign();
+    initAuditHistory();
 
     // Messages flash Laravel relayés dans le système de toasts.
     document.querySelectorAll('[data-flash]').forEach((element) => {

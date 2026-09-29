@@ -40,9 +40,9 @@ class WordpressArticlePolicy
     }
 
     /**
-     * Statut posé à la main (À corriger / Corrigé) depuis le tableau : permis
-     * sur tout article de ses sites, sauf s'il est en cours chez un autre
-     * agent — c'est alors à lui de le déclarer.
+     * « Corrigé » posé à la main depuis le tableau : par l'agent qui détient
+     * l'article, ou par l'Admin au nom de ce dernier. Un article que personne
+     * n'a pris ne peut pas être déclaré corrigé.
      */
     public function setStatus(User $user, WordpressArticle $article): Response
     {
@@ -50,9 +50,19 @@ class WordpressArticlePolicy
             return Response::deny('Ce site ne vous est pas assigné.');
         }
 
-        return $article->isLockedByOther($user)
-            ? Response::denyWithStatus(409, 'Cet article est actuellement traité par '.$article->activeAgentName().'.')
-            : Response::allow();
+        if ($article->isCompleted() && ! $user->isAdmin()) {
+            return Response::denyWithStatus(409, 'Cet article a déjà été déclaré corrigé.');
+        }
+
+        if ($article->isLockedByOther($user) && ! $user->isAdmin()) {
+            return Response::denyWithStatus(409, 'Cet article est actuellement traité par '.$article->activeAgentName().'.');
+        }
+
+        if (! $article->isLocked()) {
+            return Response::denyWithStatus(422, 'Cet article n’est assigné à aucun agent : assignez-le avant de le déclarer corrigé.');
+        }
+
+        return Response::allow();
     }
 
     /** Relancer l'audit ne modifie pas le contenu. */
@@ -66,6 +76,12 @@ class WordpressArticlePolicy
     {
         if (! $this->canAccessSite($user, $article)) {
             return Response::deny('Ce site ne vous est pas assigné.');
+        }
+
+        // Un article corrigé attend la vérification de l'Admin : lui seul
+        // peut le rendre à un agent.
+        if ($article->isCompleted() && ! $user->isAdmin()) {
+            return Response::denyWithStatus(409, 'Cet article a déjà été déclaré corrigé : seul un administrateur peut le réassigner.');
         }
 
         return $article->isLockedByOther($user)
@@ -89,6 +105,22 @@ class WordpressArticlePolicy
         return $user->isAdmin()
             ? Response::allow()
             : Response::deny('Seul un administrateur peut attribuer un article à un autre agent.');
+    }
+
+    /** Réassigner un article (corrigé ou non) à un agent : Admin uniquement. */
+    public function reassign(User $user, WordpressArticle $article): Response
+    {
+        return $user->isAdmin()
+            ? Response::allow()
+            : Response::deny('Seul un administrateur peut réassigner un article.');
+    }
+
+    /** Commenter un article à l'attention d'un agent : Admin uniquement. */
+    public function comment(User $user, WordpressArticle $article): Response
+    {
+        return $user->isAdmin()
+            ? Response::allow()
+            : Response::deny('Seul un administrateur peut commenter un article.');
     }
 
     protected function canAccessSite(User $user, WordpressArticle $article): bool

@@ -3,6 +3,7 @@
 use App\Http\Controllers\AgentController;
 use App\Http\Controllers\ArticleController;
 use App\Http\Controllers\ArticleLockController;
+use App\Http\Controllers\ArticleReviewController;
 use App\Http\Controllers\AuditController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\RegisteredUserController;
@@ -44,6 +45,7 @@ Route::get('/', fn () => redirect()->route(auth()->check() ? 'dashboard' : 'logi
 Route::middleware(['auth', 'active'])->group(function () {
     Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->name('logout');
 
+    // Admin : tableau de bord. Agent : redirigé vers ses articles.
     Route::get('/dashboard', DashboardController::class)->name('dashboard');
 
     /* --- Sites WordPress (Admin : tous les sites · Agent : ses sites assignés) --- */
@@ -80,14 +82,6 @@ Route::middleware(['auth', 'active'])->group(function () {
     Route::post('/articles/{article}/heartbeat', [ArticleLockController::class, 'heartbeat'])->name('articles.heartbeat');
     Route::post('/articles/{article}/finish', [ArticleLockController::class, 'finish'])->name('articles.finish');
 
-    /* --- Audits --- */
-    Route::get('/audits', [AuditController::class, 'index'])->name('audits.index');
-    Route::post('/audits/run', [AuditController::class, 'runForSite'])->name('audits.run');
-
-    /* --- Statistiques (Admin : globales · Agent : les siennes) --- */
-    Route::get('/statistics', [StatisticsController::class, 'index'])->name('statistics.index');
-    Route::get('/statistics/series', [StatisticsController::class, 'series'])->name('statistics.series');
-
     /*
     |----------------------------------------------------------------------
     | Administration
@@ -95,6 +89,20 @@ Route::middleware(['auth', 'active'])->group(function () {
     */
 
     Route::middleware('can:admin')->group(function () {
+        // Audits et statistiques : espace Admin. Un agent ne travaille que
+        // depuis « Articles » et « Sites WordPress ».
+        Route::get('/audits', [AuditController::class, 'index'])->name('audits.index');
+        Route::post('/audits/run', [AuditController::class, 'runForSite'])->name('audits.run');
+        Route::get('/articles/{article}/scans', [AuditController::class, 'scans'])->name('articles.scans');
+
+        Route::get('/statistics', [StatisticsController::class, 'index'])->name('statistics.index');
+        Route::get('/statistics/series', [StatisticsController::class, 'series'])->name('statistics.series');
+        Route::get('/statistics/agents/{user}', [StatisticsController::class, 'agent'])->name('statistics.agent');
+
+        /* --- Vérification des articles corrigés --- */
+        Route::post('/articles/{article}/reassign', [ArticleReviewController::class, 'reassign'])->name('articles.reassign');
+        Route::post('/articles/{article}/notes', [ArticleReviewController::class, 'storeNote'])->name('articles.notes');
+
         Route::get('/sites/create', [SiteController::class, 'create'])->name('sites.create');
         Route::post('/sites', [SiteController::class, 'store'])->name('sites.store');
         Route::get('/sites/{site}/edit', [SiteController::class, 'edit'])->name('sites.edit');

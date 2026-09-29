@@ -63,11 +63,35 @@
                     <i class="bi bi-unlock me-1" aria-hidden="true"></i> Libérer l’article (Admin)
                 </button>
             @endif
+        @elseif($article->isCompleted() && ! $me->isAdmin())
+            <p class="small mb-0">
+                Cet article a été déclaré <strong>corrigé</strong>
+                @if($article->completer) par {{ $article->completer->name }} @endif
+                le {{ $article->completed_at->translatedFormat('d/m/Y à H:i') }}.
+                Il attend la vérification de l’administrateur, qui peut le réassigner.
+            </p>
         @else
             <p class="small mb-2">Cet article est disponible. Prenez-le pour le corriger : les autres agents le verront « En cours ».</p>
             <button type="button" class="btn btn-primary w-100" data-take>
                 <i class="bi bi-person-check me-1" aria-hidden="true"></i> Prendre l’article
             </button>
+        @endif
+
+        @php $notes = $article->currentNotes(); @endphp
+        @if($notes->isNotEmpty())
+            <div class="ag-notes mt-3">
+                <p class="form-label mb-2">
+                    <i class="bi bi-chat-left-text me-1" aria-hidden="true"></i> Commentaires de l’administrateur
+                </p>
+                <ul class="list-unstyled mb-0">
+                    @foreach($notes as $note)
+                        <li class="ag-note">
+                            <p class="mb-1 small" style="white-space: pre-line;">{{ $note->body }}</p>
+                            <span class="ag-hint">{{ $note->author?->name ?? 'Admin' }} · {{ $note->created_at?->translatedFormat('d/m/Y H:i') }}</span>
+                        </li>
+                    @endforeach
+                </ul>
+            </div>
         @endif
     </div>
 </div>

@@ -7,6 +7,8 @@ use App\Jobs\AuditArticleJob;
 use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
+use App\Services\Assignment\ArticleCompletionService;
+use App\Services\Assignment\ArticleLockedException;
 use App\Services\Audit\ArticleImageReport;
 use App\Services\Audit\AuditService;
 use App\Services\Audit\AuditSettings;
@@ -114,7 +116,7 @@ class ArticleController extends Controller
     {
         $this->authorize('view', $article);
 
-        $article->load(['site', 'categories', 'assignee:id,name']);
+        $article->load(['site', 'categories', 'assignee:id,name', 'notes.author:id,name']);
         $user = $request->user();
         $this->context->remember($article->site);
 
@@ -199,57 +201,56 @@ class ArticleController extends Controller
             'ok' => true,
             'message' => 'Audit terminé.',
             'audit' => $this->auditPayload($article),
-            'row' => view('articles.partials.row', ['article' => $article->load(['categories', 'openIssues', 'assignee:id,name'])])->render(),
+            'row' => view('articles.partials.row', ['article' => $article->load(WordpressArticle::ROW_RELATIONS)])->render(),
         ]);
     }
 
     /**
-     * Statut posé à la main depuis le tableau.
+     * « Corrigé » posé à la main depuis le tableau.
      *
-     * L'utilisateur qui a corrigé un article ailleurs — directement dans
-     * WordPress, par exemple — doit pouvoir le déclarer sans attendre un
-     * nouvel audit. Le moteur d'audit garde le dernier mot : le prochain
-     * passage rouvrira les remarques encore présentes.
+     * L'agent qui a fini de corriger (« À corriger ») ou de vérifier
+     * (« À vérifier ») un article le déclare corrigé : l'article est libéré,
+     * les erreurs corrigées sont enregistrées à son nom, et il disparaît de la
+     * liste des agents jusqu'à une éventuelle réassignation par l'Admin.
      */
-    public function updateStatus(Request $request, WordpressArticle $article): JsonResponse
+    public function updateStatus(Request $request, WordpressArticle $article, ArticleCompletionService $completion): JsonResponse
     {
-        $this->authorize('setStatus', $article);
-
-        $validated = $request->validate([
-            'status' => ['required', Rule::in(array_keys(WordpressArticle::manualStatuses()))],
+        $request->validate([
+            'status' => ['required', Rule::in([WordpressArticle::STATUS_DONE])],
         ], [
             'status.in' => 'Statut inconnu.',
+            'status.required' => 'Statut inconnu.',
         ]);
+
+        $this->authorize('setStatus', $article);
 
         if (! $article->statusIsEditable()) {
             return response()->json([
                 'ok' => false,
-                'message' => 'Cet article ne présente aucun problème : son statut est déterminé par l’audit.',
+                'message' => $article->isCompleted()
+                    ? 'Cet article est déjà déclaré corrigé.'
+                    : 'Cet article n’a pas encore été analysé : lancez l’audit avant de le déclarer corrigé.',
             ], 422);
         }
 
-        // « Corrigé » exige un agent : un article non assigné n'a personne à
-        // qui créditer la correction.
-        if ($validated['status'] === WordpressArticle::AUDIT_FIXED && ! $article->isLocked()) {
-            return response()->json([
-                'ok' => false,
-                'message' => 'Cet article n’est assigné à aucun agent : assignez-le avant de le déclarer corrigé.',
-            ], 422);
+        try {
+            $article = $completion->complete($article, $request->user());
+        } catch (ArticleLockedException $e) {
+            return response()->json(['ok' => false, 'message' => $e->getMessage()], 409);
         }
 
-        // La correction déclarée est créditée, dans les statistiques, au
-        // compte qui la déclare.
-        $article->applyManualStatus($validated['status'], $request->user());
-        $article->refresh();
+        $isAdmin = $request->user()->isAdmin();
 
         return response()->json([
             'ok' => true,
-            'message' => $article->audit_status === WordpressArticle::AUDIT_FIXED
+            'message' => $isAdmin
                 ? 'Article marqué comme corrigé.'
-                : 'Article marqué comme à corriger.',
-            'row' => view('articles.partials.row', [
-                'article' => $article->load(['categories', 'openIssues', 'assignee:id,name']),
-            ])->render(),
+                : 'Article marqué comme corrigé : il est transmis à l’administrateur pour vérification.',
+            // Côté agent, la ligne quitte la liste.
+            'removed' => ! $isAdmin,
+            'row' => $isAdmin
+                ? view('articles.partials.row', ['article' => $article->load(WordpressArticle::ROW_RELATIONS)])->render()
+                : null,
         ]);
     }
 
@@ -350,12 +351,11 @@ class ArticleController extends Controller
 
         return $site->articles()
             // Chargement anticipé : évite N+1 sur les catégories et les remarques.
-            ->with(['categories:id,name', 'openIssues:id,wordpress_article_id,rule_type,severity,message', 'assignee:id,name'])
+            ->with(WordpressArticle::ROW_RELATIONS)
             ->search($filters['search'])
             ->inCategories($filters['categories'], $filters['mode'])
-            ->when($filters['status'] === 'needs_fix', fn ($query) => $query->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX))
-            ->when($filters['status'] === 'ok', fn ($query) => $query->whereIn('audit_status', [WordpressArticle::AUDIT_OK, WordpressArticle::AUDIT_FIXED]))
-            ->when($filters['status'] === 'pending', fn ($query) => $query->where('audit_status', WordpressArticle::AUDIT_PENDING))
+            ->withDisplayStatus($filters['status'])
+            ->visibleInListTo(auth()->user(), $filters['status'])
             ->forAgent($filters['agent'])
             ->orderByDesc('wordpress_published_at')
             ->orderByDesc('wp_id')
@@ -380,9 +380,8 @@ class ArticleController extends Controller
     {
         $articles = $site->articles()
             ->search($filters['search'])
-            ->when($filters['status'] === 'needs_fix', fn ($query) => $query->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX))
-            ->when($filters['status'] === 'ok', fn ($query) => $query->whereIn('audit_status', [WordpressArticle::AUDIT_OK, WordpressArticle::AUDIT_FIXED]))
-            ->when($filters['status'] === 'pending', fn ($query) => $query->where('audit_status', WordpressArticle::AUDIT_PENDING))
+            ->withDisplayStatus($filters['status'])
+            ->visibleInListTo(auth()->user(), $filters['status'])
             ->forAgent($filters['agent'])
             ->when(
                 $filters['mode'] === 'all' && $filters['categories'] !== [],
@@ -428,7 +427,7 @@ class ArticleController extends Controller
             'search' => trim((string) $request->query('search', '')),
             'categories' => $categories,
             'mode' => $request->query('mode') === 'all' ? 'all' : 'any',
-            'status' => in_array($request->query('status'), ['needs_fix', 'ok', 'pending'], true)
+            'status' => in_array($request->query('status'), WordpressArticle::STATUS_FILTERS, true)
                 ? (string) $request->query('status')
                 : 'all',
             'agent' => $this->agentFilter($request),

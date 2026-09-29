@@ -2,7 +2,7 @@
 
 @section('title', 'Audits')
 @section('heading', 'Audits')
-@section('subheading', $site ? 'Problèmes ouverts sur '.$site->name : 'Sélectionnez un site WordPress.')
+@section('subheading', $site ? ($tab === 'history' ? 'Historique des scans de '.$site->name : 'Problèmes ouverts sur '.$site->name) : 'Sélectionnez un site WordPress.')
 
 @section('breadcrumb')
     <a href="{{ route('dashboard') }}">Dashboard</a> <span class="mx-1">/</span>
@@ -34,7 +34,20 @@
         </div>
     </div>
 @else
+    <nav class="ag-tabs mb-3" aria-label="Vue des audits">
+        <a href="{{ route('audits.index') }}" @class(['is-active' => $tab === 'issues'])
+           @if($tab === 'issues') aria-current="page" @endif>
+            <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i> Problèmes ouverts
+        </a>
+        <a href="{{ route('audits.index', ['tab' => 'history']) }}" @class(['is-active' => $tab === 'history'])
+           @if($tab === 'history') aria-current="page" @endif>
+            <i class="bi bi-clock-history me-1" aria-hidden="true"></i> Historique des scans
+        </a>
+    </nav>
 
+@if($tab === 'history')
+    @include('audits.partials.history')
+@else
     {{-- Répartition par règle --}}
     <div class="d-flex flex-wrap gap-2 mb-3">
         <a href="{{ route('audits.index') }}"
@@ -109,5 +122,6 @@
             </div>
         @endif
     </div>
+@endif
 @endif
 @endsection

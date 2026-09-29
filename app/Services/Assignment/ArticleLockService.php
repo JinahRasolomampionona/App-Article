@@ -54,6 +54,12 @@ class ArticleLockService
                 throw ArticleLockedException::heldBy($current->activeAgentName());
             }
 
+            // Un article déclaré corrigé ne revient à un agent que par
+            // l'Admin (réassignation).
+            if ($current->isCompleted() && ! $forcing) {
+                throw ArticleLockedException::completed();
+            }
+
             // Écriture conditionnelle : ne réussit que si la ligne est encore
             // dans l'état lu ci-dessus.
             $updated = WordpressArticle::query()
@@ -67,6 +73,9 @@ class ArticleLockService
                     'assigned_to' => $agent->id,
                     'locked_at' => $wasLocked && $previousHolder === $agent->id ? $current->locked_at : $now,
                     'lock_expires_at' => $now->copy()->addMinutes($this->ttlMinutes()),
+                    // Reprise en charge : l'article n'est plus « Corrigé ».
+                    'completed_at' => null,
+                    'completed_by' => null,
                 ]);
 
             if ($updated !== 1) {

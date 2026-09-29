@@ -23,6 +23,20 @@ class ArticleLockedException extends RuntimeException
         );
     }
 
+    public static function completed(): self
+    {
+        return new self(
+            'Cet article a déjà été déclaré corrigé : seul un administrateur peut le réassigner.'
+        );
+    }
+
+    public static function unassigned(): self
+    {
+        return new self(
+            'Cet article n’est assigné à aucun agent : assignez-le avant de le déclarer corrigé.'
+        );
+    }
+
     public static function notHeld(): self
     {
         return new self(

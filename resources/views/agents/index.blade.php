@@ -67,12 +67,14 @@
                     <td><span class="ag-hint">{{ $user->created_at?->translatedFormat('d/m/Y') }}</span></td>
                     <td class="text-end">
                         <div class="d-inline-flex gap-1">
-                            <a href="{{ route('statistics.index', ['agent' => $user->id]) }}"
+                            @if($user->isAgent())
+                            <a href="{{ route('statistics.agent', $user) }}"
                                class="btn btn-sm btn-outline-secondary"
                                data-bs-toggle="tooltip" title="Statistiques"
                                aria-label="Statistiques de {{ $user->name }}">
                                 <i class="bi bi-bar-chart-line" aria-hidden="true"></i>
                             </a>
+                            @endif
                             <a href="{{ route('agents.edit', $user) }}" class="btn btn-sm btn-outline-primary">Modifier</a>
                             @can('delete', $user)
                                 <form method="POST" action="{{ route('agents.destroy', $user) }}"

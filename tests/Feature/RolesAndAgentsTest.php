@@ -3,10 +3,14 @@
 namespace Tests\Feature;
 
 use App\Models\ArticleStatusHistory;
+use App\Models\SiteCredential;
 use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 /**
@@ -53,17 +57,27 @@ class RolesAndAgentsTest extends TestCase
         $this->assertSame(User::ROLE_AGENT, $this->jinah->fresh()->role);
     }
 
-    public function test_la_sidebar_d_un_agent_ne_propose_pas_l_administration(): void
+    public function test_la_sidebar_d_un_agent_ne_propose_que_articles_et_sites(): void
     {
+        $this->assignSite($this->jinah, $this->site);
+
         $this->actingAs($this->jinah)
-            ->get(route('dashboard'))
+            ->get(route('articles.index'))
             ->assertOk()
-            ->assertSee('Mes statistiques')
+            ->assertSee('data-label="Articles"', false)
+            ->assertSee('data-label="Sites WordPress"', false)
+            ->assertDontSee('data-label="Dashboard"', false)
+            ->assertDontSee('data-label="Audits"', false)
+            ->assertDontSee('data-label="Statistiques"', false)
+            ->assertDontSee('Mes statistiques')
             ->assertDontSee('data-label="Agents"', false)
             ->assertDontSee('data-label="Paramètres"', false);
 
         $this->actingAs($this->admin)
             ->get(route('dashboard'))
+            ->assertSee('data-label="Dashboard"', false)
+            ->assertSee('data-label="Audits"', false)
+            ->assertSee('data-label="Statistiques"', false)
             ->assertSee('data-label="Agents"', false)
             ->assertSee('data-label="Sites WordPress"', false);
     }
@@ -90,7 +104,7 @@ class RolesAndAgentsTest extends TestCase
 
     public function test_l_espace_sites_d_un_agent_n_affiche_que_synchroniser(): void
     {
-        \Illuminate\Support\Facades\Queue::fake();
+        Queue::fake();
         $this->assignSite($this->jinah, $this->site);
 
         $this->actingAs($this->jinah)
@@ -211,15 +225,11 @@ class RolesAndAgentsTest extends TestCase
         $this->actingAs($this->jinah)->get(route('articles.index', ['site' => $this->site->id]))->assertOk();
     }
 
-    public function test_un_site_termine_reste_dans_les_statistiques_de_l_agent(): void
+    public function test_le_dashboard_d_un_agent_le_renvoie_vers_ses_articles(): void
     {
-        $this->assignSite($this->jinah, $this->site);
-        $this->site->assignmentOf($this->jinah)->forceFill(['status' => 'done', 'completed_at' => now()])->save();
-
         $this->actingAs($this->jinah)
-            ->get(route('statistics.index', ['site' => $this->site->id]))
-            ->assertOk()
-            ->assertSee($this->site->name);
+            ->get(route('dashboard'))
+            ->assertRedirect(route('articles.index'));
     }
 
     public function test_retirer_un_agent_d_un_site_lui_retire_l_acces_et_libere_ses_articles(): void
@@ -266,12 +276,12 @@ class RolesAndAgentsTest extends TestCase
 
     public function test_l_application_password_est_stockee_chiffree_dans_sa_propre_table(): void
     {
-        $credential = \App\Models\SiteCredential::where('wordpress_site_id', $this->site->id)->firstOrFail();
-        $raw = \Illuminate\Support\Facades\DB::table('site_credentials')->where('id', $credential->id)->value('application_password');
+        $credential = SiteCredential::where('wordpress_site_id', $this->site->id)->firstOrFail();
+        $raw = DB::table('site_credentials')->where('id', $credential->id)->value('application_password');
 
         $this->assertSame('abcd1234abcd1234abcd1234', $credential->application_password);
         $this->assertNotSame('abcd1234abcd1234abcd1234', $raw);
-        $this->assertFalse(\Illuminate\Support\Facades\Schema::hasColumn('wordpress_sites', 'application_password'));
+        $this->assertFalse(Schema::hasColumn('wordpress_sites', 'application_password'));
     }
 
     public function test_l_admin_n_attribue_un_article_qu_a_un_agent_assigne_au_site(): void
@@ -422,26 +432,25 @@ class RolesAndAgentsTest extends TestCase
 
     /* --- Statistiques ---------------------------------------------------------- */
 
-    public function test_un_agent_ne_voit_que_ses_propres_statistiques(): void
+    /** Seul l'Admin consulte les statistiques, y compris par URL directe. */
+    public function test_un_agent_n_accede_ni_aux_statistiques_ni_aux_audits(): void
     {
         $this->correction($this->daniella, 'Article de Daniella');
-        $this->correction($this->jinah, 'Article de Jinah');
 
-        $response = $this->actingAs($this->jinah)
-            // Paramètre forgé : il est ignoré pour un Agent.
-            ->get(route('statistics.index', ['agent' => $this->daniella->id]))
-            ->assertOk()
-            ->assertSee('Mes statistiques')
-            ->assertSee('Article de Jinah')
-            ->assertDontSee('Article de Daniella')
-            ->assertDontSee('Par agent');
+        $this->actingAs($this->jinah);
 
-        $this->assertSame(1, $response->viewData('me')['corrected']);
+        $this->get(route('statistics.index'))->assertForbidden();
+        $this->get(route('statistics.index', ['agent' => $this->jinah->id]))->assertForbidden();
+        $this->get(route('statistics.agent', $this->daniella))->assertForbidden();
+        $this->get(route('statistics.agent', $this->jinah))->assertForbidden();
+        $this->getJson(route('statistics.series'))->assertForbidden();
+        $this->get(route('audits.index'))->assertForbidden();
+        $this->postJson(route('audits.run'))->assertForbidden();
     }
 
     /**
      * Jinah prend 2 articles « À corriger » : En cours 2. Elle en passe un en
-     * « Corrigé » : Articles corrigés 1, En cours 1.
+     * « Corrigé » : Corrigés 1, En cours 1 (vue « Par agent » de l'Admin).
      */
     public function test_en_cours_et_corriges_de_l_agent_suivent_le_statut(): void
     {
@@ -455,69 +464,55 @@ class RolesAndAgentsTest extends TestCase
             $this->actingAs($this->jinah)->postJson(route('articles.take', $article))->assertOk();
         }
 
-        $me = $this->actingAs($this->jinah)->get(route('statistics.index'))->assertOk()
-            ->assertDontSee('parmi vos articles en cours')
-            ->viewData('me');
-        $this->assertSame(2, $me['in_progress']);
-        $this->assertSame(0, $me['corrected']);
+        $row = $this->jinahRow();
+        $this->assertSame(2, $row['in_progress']);
+        $this->assertSame(0, $row['fixed']);
 
         $this->actingAs($this->jinah)
-            ->postJson(route('articles.status', $a), ['status' => WordpressArticle::AUDIT_FIXED])
+            ->postJson(route('articles.status', $a), ['status' => WordpressArticle::STATUS_DONE])
             ->assertOk();
 
-        $response = $this->actingAs($this->jinah)->get(route('statistics.index'))->assertOk();
-        $this->assertSame(1, $response->viewData('me')['in_progress']);
-        $this->assertSame(1, $response->viewData('me')['corrected']);
-        $this->assertSame(1, $response->viewData('inProgress')->total());
+        $row = $this->jinahRow();
+        $this->assertSame(1, $row['in_progress']);
+        $this->assertSame(1, $row['fixed']);
     }
 
     /**
-     * Jinah prend un article, le passe en « Corrigé », puis l'Admin la libère :
-     * la correction reste à son actif (Jinah, « Par agent », page Sites).
+     * Jinah corrige deux articles ; l'Admin en réassigne un : la correction
+     * déjà faite reste à son actif, et l'article repasse « En cours ».
      */
-    public function test_une_correction_reste_acquise_apres_liberation_par_l_admin(): void
+    public function test_une_correction_reste_acquise_apres_reassignation(): void
     {
         $this->assignSite($this->jinah, $this->site);
 
-        foreach (['release', 'agent'] as $how) {
+        foreach (range(1, 2) as $i) {
             $article = WordpressArticle::factory()->for($this->site, 'site')->create([
                 'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,
             ]);
 
             $this->actingAs($this->jinah)->postJson(route('articles.take', $article))->assertOk();
             $this->actingAs($this->jinah)
-                ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])
+                ->postJson(route('articles.status', $article), ['status' => WordpressArticle::STATUS_DONE])
                 ->assertOk();
 
-            $how === 'release'
-                ? $this->actingAs($this->admin)->postJson(route('articles.release', $article))->assertOk()
-                : $this->actingAs($this->admin)->postJson(route('articles.agent', $article), ['agent' => null])->assertOk();
-
             $this->assertNull($article->fresh()->assigned_to);
-            $this->assertSame(WordpressArticle::AUDIT_FIXED, $article->fresh()->audit_status);
+            $this->assertTrue($article->fresh()->isCompleted());
         }
 
-        $me = $this->actingAs($this->jinah)->get(route('statistics.index'))->assertOk()->viewData('me');
-        $this->assertSame(2, $me['corrected']);
-        $this->assertSame(0, $me['in_progress']);
-
-        $jinahRow = collect($this->actingAs($this->admin)->get(route('statistics.index'))->viewData('agentRows'))
-            ->firstWhere('agent', $this->jinah->id);
-        $this->assertSame(2, $jinahRow['fixed']);
-        $this->assertSame(0, $jinahRow['in_progress']);
+        $row = $this->jinahRow();
+        $this->assertSame(2, $row['fixed']);
+        $this->assertSame(0, $row['in_progress']);
 
         $this->actingAs($this->admin)->get(route('sites.index'))
             ->assertSeeInOrder(['Jinah', '2 corrigé(s) · 0 en cours']);
 
-        // L'Admin repasse ensuite un des articles « À corriger » : la
-        // correction de Jinah reste acquise.
-        $article = WordpressArticle::query()->latest('id')->first();
         $this->actingAs($this->admin)
-            ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_NEEDS_FIX])
+            ->postJson(route('articles.reassign', $article), ['agent' => $this->jinah->id, 'comment' => 'Encore une image floue.'])
             ->assertOk();
 
-        $this->assertSame(WordpressArticle::AUDIT_NEEDS_FIX, $article->fresh()->audit_status);
-        $this->assertSame(2, $this->actingAs($this->jinah)->get(route('statistics.index'))->viewData('me')['corrected']);
+        $row = $this->jinahRow();
+        $this->assertSame(2, $row['fixed']);
+        $this->assertSame(1, $row['in_progress']);
     }
 
     public function test_l_admin_retire_les_sites_supprimes_des_statistiques(): void
@@ -560,45 +555,39 @@ class RolesAndAgentsTest extends TestCase
         $this->assertSame(0, ArticleStatusHistory::count());
         $this->assertSame(0, WordpressArticle::query()->whereNotNull('assigned_to')->count());
 
-        $me = $this->actingAs($this->jinah)->get(route('statistics.index'))->viewData('me');
-        $this->assertSame(0, $me['corrected']);
-        $this->assertSame(0, $me['in_progress']);
+        $row = $this->jinahRow();
+        $this->assertSame(0, $row['fixed']);
+        $this->assertSame(0, $row['in_progress']);
     }
 
-    public function test_l_agent_peut_annuler_sa_declaration_tant_qu_il_detient_l_article(): void
+    public function test_l_admin_voit_chaque_agent_et_le_detail_de_ses_articles(): void
     {
         $this->assignSite($this->jinah, $this->site);
-        $article = WordpressArticle::factory()->for($this->site, 'site')->create([
-            'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,
-        ]);
+        $this->assignSite($this->daniella, $this->site);
 
-        $this->actingAs($this->jinah)->postJson(route('articles.take', $article))->assertOk();
-        $this->actingAs($this->jinah)->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_FIXED])->assertOk();
-        $this->actingAs($this->jinah)->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_NEEDS_FIX])->assertOk();
-
-        $me = $this->actingAs($this->jinah)->get(route('statistics.index'))->viewData('me');
-        $this->assertSame(0, $me['corrected']);
-        $this->assertSame(1, $me['in_progress']);
-    }
-
-    public function test_l_admin_voit_toutes_les_statistiques_et_filtre_par_agent(): void
-    {
-        $this->correction($this->daniella, 'Article de Daniella');
-        $this->correction($this->jinah, 'Article de Jinah');
-        $this->lockFor(WordpressArticle::factory()->for($this->site, 'site')->create(), $this->jinah);
+        foreach ([[$this->daniella, 'Article de Daniella'], [$this->jinah, 'Article de Jinah']] as [$agent, $title]) {
+            $article = WordpressArticle::factory()->for($this->site, 'site')->create([
+                'title' => $title,
+                'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,
+            ]);
+            $this->lockFor($article, $agent);
+            $this->actingAs($agent)
+                ->postJson(route('articles.status', $article), ['status' => WordpressArticle::STATUS_DONE])
+                ->assertOk();
+        }
 
         $this->actingAs($this->admin)
             ->get(route('statistics.index'))
             ->assertOk()
             ->assertSee('Par agent')
-            ->assertSee('Article de Daniella')
-            ->assertSee('Article de Jinah')
-            ->assertSee('Articles en cours');
+            ->assertSee('Daniella')
+            ->assertSee('Jinah')
+            ->assertSee(route('statistics.agent', $this->daniella), false);
 
         $this->actingAs($this->admin)
-            ->get(route('statistics.index', ['agent' => $this->daniella->id]))
+            ->get(route('statistics.agent', $this->daniella))
             ->assertOk()
-            ->assertSee('Corrections de Daniella')
+            ->assertSee('Articles de Daniella')
             ->assertSee('Article de Daniella')
             ->assertDontSee('Article de Jinah');
     }
@@ -629,16 +618,13 @@ class RolesAndAgentsTest extends TestCase
         $response->assertDontSee('>Corrections<', false)->assertSee('Corrigés')->assertSee('En cours');
     }
 
-    public function test_l_admin_filtre_les_statistiques_par_date(): void
+    /**
+     * @return array<string, mixed>
+     */
+    protected function jinahRow(): array
     {
-        $this->correction($this->daniella, 'Ancienne correction', now()->subMonths(2));
-        $this->correction($this->daniella, 'Correction récente', now());
-
-        $this->actingAs($this->admin)
-            ->get(route('statistics.index', ['from' => now()->subWeek()->toDateString()]))
-            ->assertOk()
-            ->assertSee('Correction récente')
-            ->assertDontSee('Ancienne correction');
+        return collect($this->actingAs($this->admin)->get(route('statistics.index'))->assertOk()->viewData('agentRows'))
+            ->firstWhere('agent', $this->jinah->id);
     }
 
     protected function correction(User $agent, string $title, $at = null): ArticleStatusHistory

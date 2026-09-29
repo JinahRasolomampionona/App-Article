@@ -561,6 +561,48 @@ html.ag-nav-collapsed .ag-sidebar {
     &--success &__value {
         color: var(--ag-success);
     }
+
+    &--info &__value {
+        color: var(--ag-info);
+    }
+
+    // Carte cliquable : mène au tableau des articles filtré.
+    &--link {
+        display: block;
+        color: inherit;
+        text-decoration: none;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+
+        &:hover,
+        &:focus-visible {
+            color: inherit;
+            border-color: var(--ag-primary);
+            box-shadow: 0 4px 14px rgba(108, 76, 232, 0.12);
+            transform: translateY(-1px);
+        }
+    }
+
+    &__go {
+        font-size: 1rem;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+
+    &--link:hover &__go,
+    &--link:focus-visible &__go {
+        opacity: 1;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ag-stat--link {
+        transition: none;
+
+        &:hover,
+        &:focus-visible {
+            transform: none;
+        }
+    }
 }
 
 // Trois repères de même largeur, empilés dès que la place manque.
@@ -860,6 +902,11 @@ html.ag-nav-collapsed .ag-sidebar {
         background-color: var(--ag-success-soft);
         color: #1f7a50;
     }
+
+    &--info {
+        background-color: var(--ag-info-soft);
+        color: #2b6ca8;
+    }
 }
 
 .ag-chip {
@@ -1113,6 +1160,30 @@ html.ag-nav-collapsed .ag-sidebar {
 
 .ag-row-flash {
     animation: ag-flash 1.4s ease;
+}
+
+// Commentaires de l'Admin à l'attention d'un agent.
+.ag-note {
+    padding: 0.5rem 0.625rem;
+    border-left: 3px solid var(--ag-primary);
+    background: var(--ag-primary-soft);
+    border-radius: 0 8px 8px 0;
+
+    & + & {
+        margin-top: 0.5rem;
+    }
+}
+
+// Ligne qui quitte le tableau (article déclaré corrigé côté agent).
+.ag-row-leave {
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ag-row-leave {
+        transition: none;
+    }
 }
 
 @keyframes ag-flash {
@@ -1803,9 +1874,11 @@ html.ag-nav-collapsed .ag-sidebar {
     padding: 2px;
     gap: 2px;
 
-    button {
+    button,
+    a {
         border: 0;
         background: transparent;
+        text-decoration: none;
         font-size: 0.8125rem;
         font-weight: 550;
         color: #5b6373;

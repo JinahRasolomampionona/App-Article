@@ -37,7 +37,8 @@
     </div>
 @else
 <div id="ag-articles" data-url="{{ route('articles.index') }}"
-     data-poll-url="{{ route('articles.assignments') }}" data-poll-seconds="{{ $pollSeconds }}">
+     data-poll-url="{{ route('articles.assignments') }}" data-poll-seconds="{{ $pollSeconds }}"
+     data-hide-completed="{{ auth()->user()->isAdmin() ? '0' : '1' }}">
 
     {{-- Filtres --}}
     <form id="ag-filters" class="ag-card mb-3" method="GET" action="{{ route('articles.index') }}">
@@ -59,7 +60,10 @@
                     <select id="ag-status" name="status" class="form-select">
                         <option value="" @selected($filters['status'] === 'all')>Tous</option>
                         <option value="needs_fix" @selected($filters['status'] === 'needs_fix')>À corriger</option>
-                        <option value="ok" @selected($filters['status'] === 'ok')>Sans erreur</option>
+                        <option value="to_review" @selected($filters['status'] === 'to_review')>À vérifier</option>
+                        <option value="fixed" @selected($filters['status'] === 'fixed')>
+                            {{ auth()->user()->isAdmin() ? 'Corrigés' : 'Mes corrigés' }}
+                        </option>
                         <option value="pending" @selected($filters['status'] === 'pending')>En attente d’audit</option>
                     </select>
                 </div>
@@ -174,6 +178,9 @@
                         <th scope="col">Statut</th>
                         <th scope="col">Agent</th>
                         <th scope="col" class="text-end">Actions</th>
+                        @if(auth()->user()->isAdmin())
+                            <th scope="col" class="text-end">Réassigner</th>
+                        @endif
                     </tr>
                 </thead>
                 <tbody id="ag-articles-body">
@@ -211,6 +218,10 @@
         </div>
     </div>
 </div>
+
+@can('admin')
+    @include('articles.partials.reassign-modal', ['agents' => $agents])
+@endcan
 
 {{-- Modal : images de l'article (à la une + contenu) et leur qualité --}}
 <div class="modal fade" id="ag-images-modal" tabindex="-1" aria-labelledby="ag-images-heading" aria-hidden="true">

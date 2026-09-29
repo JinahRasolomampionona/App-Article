@@ -2,13 +2,13 @@
 
 namespace App\Models;
 
-use App\Services\Stats\StatisticsRecorder;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Collection;
 
 class WordpressArticle extends Model
 {
@@ -25,6 +25,24 @@ class WordpressArticle extends Model
 
     /** Des problèmes existaient puis ont été confirmés résolus par un nouvel audit. */
     public const AUDIT_FIXED = 'fixed';
+
+    /** Statut affiché : aucun problème détecté, l'article reste à vérifier. */
+    public const STATUS_TO_REVIEW = 'to_review';
+
+    /** Statut affiché : l'agent a déclaré l'article corrigé (manuel). */
+    public const STATUS_DONE = 'fixed';
+
+    /** Filtres de statut acceptés par le tableau des articles. */
+    public const STATUS_FILTERS = [self::AUDIT_NEEDS_FIX, self::STATUS_TO_REVIEW, self::STATUS_DONE, self::AUDIT_PENDING];
+
+    /** Relations affichées par une ligne du tableau (chargement anticipé). */
+    public const ROW_RELATIONS = [
+        'categories:id,name',
+        'openIssues:id,wordpress_article_id,rule_type,severity,message',
+        'assignee:id,name',
+        'completer:id,name',
+        'notes.author:id,name',
+    ];
 
     protected $fillable = [
         'wordpress_site_id',
@@ -67,6 +85,8 @@ class WordpressArticle extends Model
             'lock_expires_at' => 'datetime',
             'issues_resolved_at' => 'datetime',
             'status_set_manually_at' => 'datetime',
+            'completed_at' => 'datetime',
+            'completed_by' => 'integer',
         ];
     }
 
@@ -90,6 +110,15 @@ class WordpressArticle extends Model
         return $this->hasMany(ArticleAudit::class)->latest();
     }
 
+    /**
+     * Tous les scans, sans ordre imposé : sert les agrégats (premier et
+     * dernier scan, nombre de scans) de l'historique des audits.
+     */
+    public function scans(): HasMany
+    {
+        return $this->hasMany(ArticleAudit::class);
+    }
+
     public function issues(): HasMany
     {
         return $this->hasMany(ArticleAuditIssue::class);
@@ -109,6 +138,65 @@ class WordpressArticle extends Model
     public function assignments(): HasMany
     {
         return $this->hasMany(ArticleAssignment::class);
+    }
+
+    /** Agent qui a déclaré l'article « Corrigé ». */
+    public function completer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'completed_by');
+    }
+
+    /** Commentaires de l'Admin, du plus récent au plus ancien. */
+    public function notes(): HasMany
+    {
+        return $this->hasMany(ArticleNote::class)->latest()->latest('id');
+    }
+
+    /* --- Fin de traitement ---------------------------------------------------- */
+
+    /**
+     * L'agent a déclaré l'article « Corrigé » : il quitte la liste des agents
+     * et attend la vérification de l'Admin.
+     */
+    public function isCompleted(): bool
+    {
+        return $this->completed_at !== null;
+    }
+
+    /**
+     * Statut affiché, qui combine l'audit et la fin de traitement :
+     *
+     * - `fixed` (Corrigé) : déclaré terminé par l'agent ;
+     * - `needs_fix` (À corriger) : l'audit a trouvé au moins un problème ;
+     * - `to_review` (À vérifier) : aucun problème détecté, reste à vérifier ;
+     * - `pending` : pas encore audité.
+     */
+    public function displayStatus(): string
+    {
+        return match (true) {
+            $this->isCompleted() => self::STATUS_DONE,
+            $this->audit_status === self::AUDIT_NEEDS_FIX => self::AUDIT_NEEDS_FIX,
+            in_array($this->audit_status, [self::AUDIT_OK, self::AUDIT_FIXED], true) => self::STATUS_TO_REVIEW,
+            default => self::AUDIT_PENDING,
+        };
+    }
+
+    /**
+     * Commentaires de l'Admin qui concernent la prise en charge en cours :
+     * ceux écrits depuis que l'agent actuel a l'article.
+     *
+     * @return Collection<int, ArticleNote>
+     */
+    public function currentNotes(): Collection
+    {
+        if (! $this->isLocked() || $this->locked_at === null) {
+            return collect();
+        }
+
+        $since = $this->locked_at->copy()->subMinute();
+        $notes = $this->relationLoaded('notes') ? $this->notes : $this->notes()->with('author:id,name')->get();
+
+        return $notes->filter(fn (ArticleNote $note) => $note->created_at !== null && $note->created_at->gte($since))->values();
     }
 
     /* --- Verrou de traitement ------------------------------------------------ */
@@ -213,122 +301,84 @@ class WordpressArticle extends Model
     }
 
     /**
-     * Statuts que l'utilisateur peut poser lui-même depuis le tableau.
-     *
-     * « OK » n'en fait pas partie : il signifie « aucun problème détecté », ce
-     * qui relève du moteur d'audit et non d'une déclaration.
+     * Choix du sélecteur de statut : le statut actuel (« À corriger » ou
+     * « À vérifier ») et « Corrigé », que l'agent pose à la main une fois
+     * l'article traité.
      *
      * @return array<string, string>
      */
-    public static function manualStatuses(): array
+    public function statusOptions(): array
     {
         return [
-            self::AUDIT_NEEDS_FIX => 'À corriger',
-            self::AUDIT_FIXED => 'Corrigé',
+            $this->displayStatus() => (string) $this->statusLabel(),
+            self::STATUS_DONE => 'Corrigé',
         ];
     }
 
     /**
-     * Le statut courant peut-il être modifié à la main ?
-     *
-     * Un article sans aucun problème détecté reste en « OK » : le proposer
-     * comme « Corrigé » n'aurait pas de sens, et le basculer en « À corriger »
-     * inventerait un défaut que l'audit n'a pas vu.
+     * Le sélecteur n'est proposé que sur un article audité et pas encore
+     * déclaré corrigé : un article corrigé ne revient à un agent que par une
+     * réassignation de l'Admin.
      */
     public function statusIsEditable(): bool
     {
-        return in_array($this->audit_status, [self::AUDIT_NEEDS_FIX, self::AUDIT_FIXED], true);
-    }
-
-    /**
-     * Applique un statut choisi par l'utilisateur.
-     *
-     * « Corrigé » clôture les remarques ouvertes — sinon le tableau afficherait
-     * un statut corrigé à côté de problèmes toujours listés — en les marquant
-     * comme résolues à la main. Revenir à « À corriger » les rouvre : seules
-     * celles que l'utilisateur avait lui-même clôturées sont concernées, une
-     * remarque réellement résolue par un audit n'est jamais ressuscitée.
-     *
-     * Le prochain audit reste souverain : si le défaut est toujours là, il
-     * rouvrira la remarque et le statut repassera à « À corriger ».
-     *
-     * Les statistiques suivent : « Corrigé » crédite `$by` (le compte qui le
-     * déclare) d'une correction ; revenir à « À corriger » retire cette
-     * correction déclarée à la main — sauf si elle est acquise à un agent qui
-     * n'a plus l'article (voir StatisticsRecorder::retractManualCorrection).
-     */
-    public function applyManualStatus(string $status, ?User $by = null): void
-    {
-        if (! array_key_exists($status, self::manualStatuses())) {
-            return;
-        }
-
-        $previousStatus = $this->audit_status;
-
-        if ($status === self::AUDIT_FIXED) {
-            $resolved = $this->openIssues()->count();
-
-            $this->openIssues()->update([
-                'resolved_at' => now(),
-                'resolved_manually' => true,
-            ]);
-
-            $this->forceFill([
-                'audit_status' => self::AUDIT_FIXED,
-                'issues_count' => 0,
-                'issues_resolved_at' => now(),
-                'status_set_manually_at' => now(),
-            ])->save();
-
-            // L'article est déclaré corrigé : il entre dans l'historique des
-            // statistiques, en restant distingué d'une correction confirmée
-            // par un audit.
-            app(StatisticsRecorder::class)->record(
-                $this,
-                $previousStatus,
-                self::AUDIT_FIXED,
-                manual: true,
-                issuesResolved: $resolved,
-                agent: $by,
-            );
-
-            return;
-        }
-
-        $this->issues()
-            ->whereNotNull('resolved_at')
-            ->where('resolved_manually', true)
-            ->update(['resolved_at' => null, 'resolved_manually' => false]);
-
-        $this->forceFill([
-            'audit_status' => self::AUDIT_NEEDS_FIX,
-            'issues_count' => $this->openIssues()->count(),
-            'status_set_manually_at' => now(),
-        ])->save();
-
-        if ($previousStatus === self::AUDIT_FIXED) {
-            app(StatisticsRecorder::class)->retractManualCorrection($this, $by);
-        }
+        return in_array($this->displayStatus(), [self::AUDIT_NEEDS_FIX, self::STATUS_TO_REVIEW], true);
     }
 
     public function statusLabel(): ?string
     {
-        return match ($this->audit_status) {
+        return match ($this->displayStatus()) {
+            self::STATUS_DONE => 'Corrigé',
             self::AUDIT_NEEDS_FIX => 'À corriger',
-            self::AUDIT_FIXED => 'Corrigé',
-            self::AUDIT_OK => 'OK',
+            self::STATUS_TO_REVIEW => 'À vérifier',
             default => null,
         };
     }
 
     public function statusVariant(): string
     {
-        return match ($this->audit_status) {
+        return match ($this->displayStatus()) {
+            self::STATUS_DONE => 'success',
             self::AUDIT_NEEDS_FIX => 'danger',
-            self::AUDIT_FIXED => 'success',
-            self::AUDIT_OK => 'neutral',
+            self::STATUS_TO_REVIEW => 'info',
             default => 'muted',
         };
+    }
+
+    /**
+     * Filtre sur le statut affiché (voir displayStatus()).
+     *
+     * @param  Builder<WordpressArticle>  $query
+     * @return Builder<WordpressArticle>
+     */
+    public function scopeWithDisplayStatus(Builder $query, ?string $status): Builder
+    {
+        return match ($status) {
+            self::STATUS_DONE => $query->whereNotNull('completed_at'),
+            self::AUDIT_NEEDS_FIX => $query->whereNull('completed_at')->where('audit_status', self::AUDIT_NEEDS_FIX),
+            self::STATUS_TO_REVIEW => $query->whereNull('completed_at')->whereIn('audit_status', [self::AUDIT_OK, self::AUDIT_FIXED]),
+            self::AUDIT_PENDING => $query->whereNull('completed_at')->where('audit_status', self::AUDIT_PENDING),
+            default => $query,
+        };
+    }
+
+    /**
+     * Articles de la liste d'un utilisateur : tous pour l'Admin ; pour un
+     * Agent, ceux qui ne sont pas encore déclarés corrigés — sauf s'il filtre
+     * sur « Corrigés », auquel cas il ne voit que les siens.
+     *
+     * @param  Builder<WordpressArticle>  $query
+     * @return Builder<WordpressArticle>
+     */
+    public function scopeVisibleInListTo(Builder $query, User $user, ?string $status = null): Builder
+    {
+        if ($user->isAdmin()) {
+            return $query;
+        }
+
+        return $status === self::STATUS_DONE
+            ? $query->where('completed_by', $user->id)
+            : $query->whereNull('completed_at');
     }
 
     /**

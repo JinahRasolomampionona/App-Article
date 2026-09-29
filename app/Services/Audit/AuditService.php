@@ -6,7 +6,6 @@ use App\Models\ArticleAudit;
 use App\Models\ArticleAuditIssue;
 use App\Models\WordpressArticle;
 use App\Services\Audit\Rules\AuditRule;
-use App\Services\Stats\StatisticsRecorder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -245,7 +244,6 @@ class AuditService
 
             $openCount = $article->openIssues()->count();
             $hadIssuesBefore = $article->issues()->whereNotNull('resolved_at')->exists();
-            $previousStatus = $article->audit_status;
 
             $status = match (true) {
                 $openCount > 0 => WordpressArticle::AUDIT_NEEDS_FIX,
@@ -270,16 +268,8 @@ class AuditService
                     : $article->issues_resolved_at,
             ])->save();
 
-            // Un article qui vient d'atteindre « OK » ou « Corrigé » entre dans
-            // l'historique des statistiques. Le constructeur du moteur étant
-            // variadique (les règles), la dépendance est résolue ici.
-            app(StatisticsRecorder::class)->record(
-                $article,
-                $previousStatus,
-                $status,
-                manual: false,
-                issuesResolved: $resolvedCount,
-            );
+            // L'audit ne crédite plus de correction : seul « Corrigé », déclaré
+            // par l'agent (ArticleCompletionService), entre dans l'historique.
 
             return $audit;
         });

@@ -1,14 +1,13 @@
 {{-- Activité par agent (Admin).
 
-     Chaque ligne mène aux statistiques filtrées sur l'agent : historique,
-     articles en cours et à corriger. --}}
+     « Voir » ouvre le détail de l'agent : ses articles en cours et corrigés,
+     les erreurs corrigées, les commentaires, et la réassignation. --}}
 
 <div class="ag-card mb-3">
     <div class="ag-card__header">
         <h2 class="ag-card__title">Par agent</h2>
         <span class="ag-hint ms-auto">
             @if($siteFilter) sur le site sélectionné @else tous sites confondus @endif
-            @if($filter->from || $filter->to) · période filtrée @endif
         </span>
     </div>
 
@@ -26,19 +25,11 @@
             </thead>
             <tbody>
             @forelse($agentRows as $row)
-                @php
-                    $value = $row['agent'];
-                    $isActive = $value !== null && (string) $agentFilter === (string) $value;
-                @endphp
+                @php $value = $row['agent']; @endphp
 
                 <tr @class(['ag-row-archived' => $row['fixed'] === 0 && $row['in_progress'] === 0])>
                     <td>
                         <span class="ag-table__title">{{ $row['label'] }}</span>
-                        @if($isActive)
-                            <span class="ag-table__url">
-                                <span class="ag-badge ag-badge--primary">Filtre actif</span>
-                            </span>
-                        @endif
                     </td>
                     <td class="text-end text-success fw-semibold">{{ $row['fixed'] }}</td>
                     <td class="text-end">
@@ -63,11 +54,8 @@
                     <td class="text-end">
                         @if($value === null)
                             <span class="ag-hint">—</span>
-                        @elseif($isActive)
-                            <a href="{{ route('statistics.index', $filter->query(['agent' => null])) }}"
-                               class="btn btn-sm btn-outline-secondary">Retirer le filtre</a>
                         @else
-                            <a href="{{ route('statistics.index', $filter->query(['agent' => $value])) }}"
+                            <a href="{{ route('statistics.agent', array_filter(['user' => $value, 'site' => $siteFilter])) }}"
                                class="btn btn-sm btn-outline-primary">Voir</a>
                         @endif
                     </td>

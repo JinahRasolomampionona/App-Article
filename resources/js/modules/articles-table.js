@@ -280,6 +280,13 @@ export function initArticlesTable() {
         try {
             const data = await http.post(select.dataset.statusUrl, { status: select.value });
 
+            if (data.removed && row) {
+                // Agent : l'article corrigé part chez l'Admin et quitte la liste.
+                notify.success(data.message);
+                removeRow(row);
+                return;
+            }
+
             if (data.row && row) {
                 row.outerHTML = data.row;
                 body.querySelector(`tr[data-article-id="${row.dataset.articleId}"]`)?.classList.add('ag-row-flash');
@@ -391,22 +398,37 @@ export function initArticlesTable() {
     function applyCells(row, state) {
         if (!row || !state) return;
 
+        if (state.completed && root.dataset.hideCompleted === '1' && currentStatusFilter() !== 'fixed') {
+            // Déclaré corrigé entre-temps : l'article n'est plus à traiter.
+            removeRow(row);
+            return;
+        }
+
         const agentCell = row.querySelector('[data-agent-cell]');
         const actionsCell = row.querySelector('[data-actions-cell]');
+        const statusCell = row.querySelector('[data-status-cell]');
         const currentKey = agentCell?.querySelector('[data-lock-key]')?.dataset.lockKey;
+        const currentStatusKey = statusCell?.querySelector('[data-status-key]')?.dataset.statusKey;
 
-        if (currentKey === state.key) return;
+        if (currentKey === state.key && (!state.status_key || currentStatusKey === state.status_key)) return;
 
         // Ne pas écraser la liste que l'utilisateur est en train de manipuler.
         if (agentCell?.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') {
             return;
         }
 
+        // Idem pour le sélecteur de statut.
+        if (statusCell?.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') {
+            return;
+        }
+
         disposeTooltips(agentCell);
         disposeTooltips(actionsCell);
+        disposeTooltips(statusCell);
 
         if (agentCell && state.agent_html) agentCell.innerHTML = state.agent_html;
         if (actionsCell && state.actions_html) actionsCell.innerHTML = state.actions_html;
+        if (statusCell && state.status_html) statusCell.innerHTML = state.status_html;
 
         initTooltips(row);
         row.classList.remove('ag-row-flash');
@@ -426,6 +448,21 @@ export function initArticlesTable() {
         const needsAgent = !state.agent_id;
         option.disabled = needsAgent;
         option.textContent = needsAgent ? 'Corrigé (assignez un agent)' : 'Corrigé';
+    }
+
+    function currentStatusFilter() {
+        return form.querySelector('[name="status"]')?.value ?? '';
+    }
+
+    /** Retire une ligne en fondu, puis recharge la page courante du tableau. */
+    function removeRow(row) {
+        disposeTooltips(row);
+        row.classList.add('ag-row-leave');
+        setTimeout(() => {
+            row.remove();
+            syncSelection();
+            load({ resetPage: false });
+        }, 250);
     }
 
     const pollUrl = root.dataset.pollUrl;

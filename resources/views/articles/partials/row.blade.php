@@ -73,8 +73,16 @@
 
     {{-- Remarques : vides tant qu'aucun problème n'est ouvert --}}
     <td>
+        @php $notes = $article->currentNotes(); @endphp
+        @if($notes->isNotEmpty())
+            {{-- Commentaire de l'Admin : ce qu'il reste à modifier. --}}
+            <span class="ag-badge ag-badge--primary mb-1" data-bs-toggle="tooltip"
+                  title="{{ $notes->first()->author?->name ?? 'Admin' }} : {{ \Illuminate\Support\Str::limit($notes->first()->body, 200) }}">
+                <i class="bi bi-chat-left-text" aria-hidden="true"></i> Commentaire admin
+            </span>
+        @endif
         @if($issues->isEmpty())
-            <span class="ag-hint">—</span>
+            @if($notes->isEmpty())<span class="ag-hint">—</span>@endif
         @else
             <div class="d-flex flex-wrap align-items-center gap-1">
                 @foreach($visible as $issue)
@@ -100,38 +108,8 @@
         @endif
     </td>
 
-    {{-- Statut : sélecteur À corriger / Corrigé dès qu'un problème a été
-         détecté. Il reste visible mais désactivé quand un autre agent traite
-         l'article. « OK » et l'absence d'audit ne se décrètent pas à la main. --}}
-    <td>
-        @if($article->statusIsEditable())
-            @php $canSetStatus = auth()->user()->can('setStatus', $article); @endphp
-            <select class="form-select form-select-sm ag-status-select ag-status-select--{{ $article->statusVariant() }}"
-                    data-status-url="{{ route('articles.status', $article) }}"
-                    aria-label="Statut de l’article {{ $article->title }}"
-                    @disabled(! $canSetStatus)
-                    @unless($canSetStatus) title="En cours par {{ $article->activeAgentName() }}" @endunless>
-                @foreach(\App\Models\WordpressArticle::manualStatuses() as $value => $label)
-                    {{-- « Corrigé » seulement pour un article assigné à un agent. --}}
-                    @php $needsAgent = $value === \App\Models\WordpressArticle::AUDIT_FIXED && ! $article->isLocked() && $article->audit_status !== $value; @endphp
-                    <option value="{{ $value }}" @selected($article->audit_status === $value) @disabled($needsAgent)>
-                        {{ $label }}{{ $needsAgent ? ' (assignez un agent)' : '' }}
-                    </option>
-                @endforeach
-            </select>
-        @elseif($article->statusLabel())
-            <span class="ag-badge ag-badge--{{ $article->statusVariant() }}">
-                {{ $article->statusLabel() }}
-            </span>
-        @elseif($article->audit_status === \App\Models\WordpressArticle::AUDIT_PENDING)
-            {{-- Pas encore audité : ne pas laisser croire à un article sans problème. --}}
-            <span class="ag-badge ag-badge--muted" data-bs-toggle="tooltip"
-                  title="L’audit de cet article est en attente ou en cours.">
-                <i class="bi bi-hourglass-split" aria-hidden="true"></i> En attente d’analyse
-            </span>
-        @else
-            <span class="ag-hint">—</span>
-        @endif
+    <td data-status-cell>
+        @include('articles.partials.status-cell', ['article' => $article])
     </td>
 
     {{-- Statut de traitement (qui travaille sur l'article), rafraîchi par
@@ -143,4 +121,21 @@
     <td class="text-end" data-actions-cell>
         @include('articles.partials.actions-cell', ['article' => $article])
     </td>
+
+    {{-- Admin : rendre l'article à un agent (après « Corrigé », s'il reste
+         une modification à faire), avec un commentaire facultatif. --}}
+    @if(auth()->user()->isAdmin())
+        <td class="text-end">
+            <button type="button" class="btn btn-sm {{ $article->isCompleted() ? 'btn-outline-primary' : 'btn-outline-secondary' }}"
+                    data-reassign-url="{{ route('articles.reassign', $article) }}"
+                    data-reassign-agent="{{ $article->completed_by ?? $article->activeAgentId() ?? '' }}"
+                    data-reassign-site="{{ $article->wordpress_site_id }}"
+                    data-reassign-title="{{ $article->title }}"
+                    data-bs-toggle="tooltip" title="Réassigner à un agent"
+                    aria-label="Réassigner l’article {{ $article->title }}">
+                <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
+                <span class="d-none d-xl-inline ms-1">Réassigner</span>
+            </button>
+        </td>
+    @endif
 </tr>

@@ -325,7 +325,7 @@ class ArticleLockTest extends TestCase
         $this->assertSame(0, ArticleStatusHistory::count());
     }
 
-    public function test_declarer_corrige_credite_l_agent_et_revenir_retire_la_correction(): void
+    public function test_declarer_corrige_credite_l_agent_et_libere_l_article(): void
     {
         $article = $this->article(['audit_status' => WordpressArticle::AUDIT_NEEDS_FIX, 'issues_count' => 1]);
 
@@ -339,16 +339,17 @@ class ArticleLockTest extends TestCase
         $this->assertSame($this->jinah->id, $entry->agent_user_id);
         $this->assertTrue($entry->resolved_manually);
 
-        $this->actingAs($this->jinah)
-            ->get(route('statistics.index'))
-            ->assertOk()
-            ->assertViewHas('me', fn ($me) => $me['corrected'] === 1);
+        // Libéré et déclaré corrigé : l'agent ne peut plus y revenir seul.
+        $article->refresh();
+        $this->assertFalse($article->isLocked());
+        $this->assertTrue($article->isCompleted());
+        $this->assertSame(ArticleAssignment::REASON_COMPLETED, ArticleAssignment::firstOrFail()->release_reason);
 
         $this->actingAs($this->jinah)
             ->postJson(route('articles.status', $article), ['status' => WordpressArticle::AUDIT_NEEDS_FIX])
-            ->assertOk();
+            ->assertStatus(422);
 
-        $this->assertSame(0, ArticleStatusHistory::count());
+        $this->assertSame(1, ArticleStatusHistory::count());
     }
 
     public function test_un_agent_ne_change_pas_le_statut_d_un_article_pris_par_un_autre(): void
@@ -440,10 +441,10 @@ class ArticleLockTest extends TestCase
         $this->assertSame(WordpressArticle::AUDIT_FIXED, $assignment->audit_result);
         $this->assertSame(0, $assignment->issues_remaining);
 
-        // La correction est créditée à Daniella dans l'historique.
-        $entry = ArticleStatusHistory::firstOrFail();
-        $this->assertSame($this->daniella->id, $entry->agent_user_id);
-        $this->assertSame('Daniella', $entry->agent);
+        // L'audit ne crédite personne : seul « Corrigé », déclaré par
+        // l'agent, entre dans l'historique.
+        $this->assertSame(0, ArticleStatusHistory::count());
+        $this->assertFalse($article->isCompleted());
     }
 
     public function test_terminer_est_refuse_a_qui_ne_detient_pas_l_article(): void

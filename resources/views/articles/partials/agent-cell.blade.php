@@ -17,6 +17,8 @@
     $options = $options->sortBy('name');
 
     $isAdmin = $me->isAdmin();
+    // Un article déclaré corrigé ne se reprend pas : l'Admin le réassigne.
+    $frozen = ($state === 'other' || $article->isCompleted()) && ! $isAdmin;
 @endphp
 
 {{-- Statut de traitement, distinct du statut d'audit. Les choix proposés
@@ -25,8 +27,8 @@
     <select class="form-select form-select-sm ag-agent-select ag-agent-select--{{ $state }}"
             data-agent-url="{{ route('articles.agent', $article) }}"
             aria-label="Agent chargé de l’article {{ $article->title }}"
-            @disabled($state === 'other' && ! $isAdmin)>
-        <option value="" @selected($holderId === null) @disabled($state === 'other' && ! $isAdmin)>Non assigné</option>
+            @disabled($frozen)>
+        <option value="" @selected($holderId === null) @disabled($frozen)>Non assigné</option>
         @foreach($options as $option)
             <option value="{{ $option->id }}" @selected($holderId === $option->id)
                     @disabled(! $isAdmin && $option->id !== $me->id)>

@@ -41,4 +41,31 @@ class ArticleAudit extends Model
     {
         return $this->hasMany(ArticleAuditIssue::class);
     }
+
+    /** Origine du scan, lisible dans l'historique. */
+    public function triggerLabel(): string
+    {
+        return match ($this->trigger_source) {
+            'save' => 'Après mise à jour',
+            'manual' => 'Audit manuel',
+            'bulk' => 'Audit en masse',
+            'sync' => 'Synchronisation',
+            'finish' => 'Fin de correction',
+            'command' => 'Commande serveur',
+            default => (string) $this->trigger_source,
+        };
+    }
+
+    /** Résultat du scan : problèmes trouvés ou non. */
+    public function resultLabel(): string
+    {
+        return $this->issues_count > 0
+            ? $this->issues_count.' problème(s)'
+            : 'Aucun problème';
+    }
+
+    public function resultVariant(): string
+    {
+        return $this->issues_count > 0 ? 'danger' : 'success';
+    }
 }
