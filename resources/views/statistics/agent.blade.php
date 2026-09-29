@@ -10,6 +10,14 @@
     <span class="active">{{ $agent->name }}</span>
 @endsection
 
+@section('actions')
+    {{-- Retour aux statistiques, en gardant le site filtré. --}}
+    <a href="{{ route('statistics.index', array_filter(['site' => $siteFilter])) }}"
+       class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left me-1" aria-hidden="true"></i> Retour aux statistiques
+    </a>
+@endsection
+
 @section('content')
     @include('statistics._filters', ['filterAction' => route('statistics.agent', $agent)])
 

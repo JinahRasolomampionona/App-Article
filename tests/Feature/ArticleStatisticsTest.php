@@ -328,6 +328,8 @@ class ArticleStatisticsTest extends TestCase
             ->get(route('statistics.agent', $agent))
             ->assertOk()
             ->assertSee('Articles de Daniella', false)
+            ->assertSee('Retour aux statistiques', false)
+            ->assertSee('href="'.route('statistics.index').'"', false)
             ->assertSee('bijouteries.top', false)
             ->assertSee('Choisir un collier', false)
             ->assertSee('Titre trop long', false)
