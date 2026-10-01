@@ -3,6 +3,7 @@ import { http } from './http.js';
 import { notify } from './toast.js';
 import { busy, debounce } from './busy.js';
 import { fileNameOf } from './url.js';
+import { bindDropzone, pickFile, rejectReason } from './dropzone.js';
 
 /**
  * Sélecteur d'image branché sur la médiathèque WordPress.
@@ -19,15 +20,16 @@ export function createMediaPicker() {
     const element = document.getElementById('ag-media-modal');
 
     if (!element) {
-        return { open: async () => null, indexUrl: null };
+        return { open: async () => null, indexUrl: null, canUpload: false, upload: async () => null };
     }
 
     const modal = new Modal(element);
     const grid = element.querySelector('[data-media-grid]');
     const search = element.querySelector('[data-media-search]');
     const confirm = element.querySelector('[data-media-confirm]');
-    const upload = element.querySelector('[data-media-upload]');
-    const uploadButton = element.querySelector('[data-media-upload-trigger]');
+    const uploadButtons = element.querySelectorAll('[data-media-upload-trigger]');
+    const dropzone = element.querySelector('[data-media-dropzone]');
+    const dropzoneTitle = element.querySelector('[data-media-dropzone-title]');
     const indexUrl = element.dataset.indexUrl;
     const storeUrl = element.dataset.storeUrl;
     const readOnly = element.dataset.readOnly === '1';
@@ -193,29 +195,87 @@ export function createMediaPicker() {
         debounce(() => load(search.value.trim()), 350),
     );
 
-    uploadButton?.addEventListener('click', () => upload.click());
+    /* --- Onglets « Téléverser des fichiers » / « Médiathèque » ------------- */
 
-    upload?.addEventListener('change', async () => {
-        const file = upload.files?.[0];
-        if (!file) return;
+    function showTab(name) {
+        element.querySelectorAll('[data-media-tab]').forEach((tab) => {
+            const active = tab.dataset.mediaTab === name;
+            tab.classList.toggle('active', active);
+            tab.setAttribute('aria-selected', String(active));
+        });
+        element.querySelectorAll('[data-media-pane]').forEach((pane) => {
+            pane.hidden = pane.dataset.mediaPane !== name;
+        });
+    }
 
-        const done = busy(uploadButton, 'Envoi…');
+    element.querySelectorAll('[data-media-tab]').forEach((tab) =>
+        tab.addEventListener('click', () => showTab(tab.dataset.mediaTab)),
+    );
+
+    /* --- Téléversement (bouton ou glisser-déposer) -------------------------- */
+
+    /**
+     * Envoie un fichier dans la médiathèque WordPress et renvoie le média
+     * créé. Partagé avec l'éditeur (dépôt sur l'image à la une ou sur une
+     * image du contenu).
+     */
+    async function uploadFile(file) {
+        const reason = rejectReason(file);
+        if (reason) throw new Error(reason);
+
         const data = new FormData();
         data.append('file', file);
 
+        const result = await http.post(storeUrl, data);
+        // La grille sera rechargée à la prochaine ouverture.
+        loaded = false;
+
+        return result;
+    }
+
+    async function uploadInModal(file) {
+        if (!file || readOnly) return;
+
+        const reason = rejectReason(file);
+        if (reason) {
+            notify.error(reason);
+            return;
+        }
+
+        const restoreTitle = dropzoneTitle?.textContent;
+        dropzone?.classList.add('is-busy');
+        if (dropzoneTitle) dropzoneTitle.textContent = `Téléversement de « ${file.name} »…`;
+        const done = Array.from(uploadButtons).map((button) => busy(button, 'Envoi…'));
+
         try {
-            const result = await http.post(storeUrl, data);
+            const result = await uploadFile(file);
             notify.success(result.message);
-            upload.value = '';
+
+            // Comme WordPress : retour à la médiathèque, nouvelle image
+            // sélectionnée, prête à être utilisée.
+            showTab('library');
+            loaded = true;
             await load();
-            selected = result.media;
+            await preselect(result.media.id);
+            selected = selected ?? result.media;
             confirm.disabled = false;
-            showDetails(selected);
         } catch (error) {
             notify.error(error.message);
         } finally {
-            done();
+            done.forEach((restore) => restore());
+            dropzone?.classList.remove('is-busy');
+            if (dropzoneTitle) dropzoneTitle.textContent = restoreTitle;
         }
+    }
+
+    uploadButtons.forEach((button) =>
+        button.addEventListener('click', async () => uploadInModal(await pickFile())),
+    );
+
+    // Toute la fenêtre accepte un dépôt, quel que soit l'onglet affiché.
+    bindDropzone(element.querySelector('[data-media-body]'), {
+        enabled: () => !readOnly && Boolean(storeUrl) && Boolean(dropzone),
+        onDrop: (file) => uploadInModal(file),
     });
 
     confirm?.addEventListener('click', () => {
@@ -255,10 +315,13 @@ export function createMediaPicker() {
 
     return {
         indexUrl,
-        async open({ mediaId = null } = {}) {
+        canUpload: !readOnly && Boolean(storeUrl),
+        upload: uploadFile,
+        async open({ mediaId = null, tab = 'library' } = {}) {
             selected = null;
             confirm.disabled = true;
             showDetails(null);
+            showTab(readOnly ? 'library' : tab);
 
             if (!loaded) {
                 loaded = true;

@@ -383,6 +383,28 @@ class ArticleLockTest extends TestCase
         );
     }
 
+    public function test_deux_heartbeats_dans_la_meme_seconde_ne_font_pas_perdre_le_verrou(): void
+    {
+        // Retour sur l'onglet + minuterie : même échéance écrite deux fois.
+        // Sous MySQL, la seconde écriture « ne modifie aucune ligne ».
+        $this->freezeSecond();
+        $article = $this->lockFor($this->article(), $this->jinah);
+
+        foreach ([1, 2] as $beat) {
+            $this->actingAs($this->jinah)
+                ->postJson(route('articles.heartbeat', $article))
+                ->assertOk()
+                ->assertJsonPath('ok', true);
+        }
+
+        $this->assertTrue($article->fresh()->isLockedBy($this->jinah));
+
+        // Reprendre son propre article dans la même seconde reste possible.
+        app(ArticleLockService::class)->take($article, $this->jinah);
+        app(ArticleLockService::class)->take($article, $this->jinah);
+        $this->assertTrue($article->fresh()->isLockedBy($this->jinah));
+    }
+
     public function test_le_heartbeat_signale_un_verrou_perdu(): void
     {
         $article = $this->lockFor($this->article(), $this->daniella);
@@ -408,7 +430,7 @@ class ArticleLockTest extends TestCase
 
         $article = $this->article([
             'title' => 'Guide des bagues',
-            'content' => '<h1>Guide des bagues</h1><h2>Section</h2><p>Texte.</p><img src="https://bijouteries.top/a.jpg" alt="Bague">',
+            'content' => '<h2>Guide des bagues</h2><h2>Section</h2><p>Texte.</p><img src="https://bijouteries.top/a.jpg" alt="Bague">',
             'featured_media_id' => 5,
             'featured_media_url' => 'https://bijouteries.top/une.jpg',
             'audit_status' => WordpressArticle::AUDIT_NEEDS_FIX,

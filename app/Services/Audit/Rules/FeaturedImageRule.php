@@ -61,9 +61,7 @@ class FeaturedImageRule implements AuditRule
 
         // L'accessibilité réelle s'appuie sur l'analyse mise en cache : aucune
         // requête supplémentaire n'est déclenchée ici.
-        $analysis = $context->allowNetwork
-            ? $this->analyzer->analyze($article->featured_media_url)
-            : $this->analyzer->cached($article->featured_media_url);
+        $analysis = $context->imageAnalysis($this->analyzer, $article->featured_media_url);
 
         if ($analysis && in_array($analysis->status, [ImageAnalysis::STATUS_UNREACHABLE, ImageAnalysis::STATUS_BLOCKED], true)) {
             return [Issue::error(

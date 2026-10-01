@@ -6,15 +6,17 @@ use App\Services\Audit\AuditContext;
 use App\Services\Audit\Issue;
 
 /**
- * Détection 7 — balises H1 du contenu.
+ * Détection 7 — balises H1.
  *
- * Le titre WordPress n'est pas compté : il est rendu par le thème, en dehors du
- * champ `content`. Seuls les H1 réellement présents dans le corps de l'article
- * sont pris en compte.
+ * Une page d'article ne doit compter qu'un seul H1 : le titre WordPress, que le
+ * thème rend en dehors du champ `content`. Tout H1 présent dans le corps de
+ * l'article en ajoute donc un second sur la page : c'est une erreur, signalée
+ * dès le premier H1 du contenu (« Problème balise H1 »).
  *
- * - 0 H1 : signalé uniquement si la règle optionnelle `missing_h1` est activée ;
- * - 1 H1 : conforme ;
- * - 2 H1 ou plus : toujours signalé.
+ * - 0 H1 dans le contenu : conforme (le titre tient lieu de H1). Signalé
+ *   uniquement si la règle optionnelle `missing_h1` est activée, pour les
+ *   thèmes qui n'affichent pas le titre en H1 ;
+ * - 1 H1 ou plus dans le contenu : toujours signalé.
  */
 class H1Rule implements AuditRule
 {
@@ -43,19 +45,23 @@ class H1Rule implements AuditRule
         $headings = $context->html()->headings(1);
         $count = count($headings);
 
-        if ($count >= 2) {
+        if ($count >= 1) {
+            // Le titre de l'article + les H1 du contenu.
+            $onPage = $count + 1;
+
             return [Issue::error(
                 'multiple_h1',
-                $count.' balises H1 détectées',
+                'Problème balise H1 : '.$onPage.' H1 sur la page',
                 [
                     'target' => 'content',
                     'count' => $count,
+                    'on_page' => $onPage,
                     'headings' => array_slice($headings, 0, 5),
                 ]
             )];
         }
 
-        if ($count === 0 && $context->settings->ruleEnabled('missing_h1')) {
+        if ($context->settings->ruleEnabled('missing_h1')) {
             return [Issue::info(
                 'missing_h1',
                 'H1 manquant',

@@ -49,6 +49,18 @@ class AuditPanelPresenter
             'target' => 'content',
         ],
         [
+            'label' => 'Images en double',
+            'rule' => 'duplicate_image',
+            'types' => ['duplicate_image'],
+            'target' => 'images',
+        ],
+        [
+            'label' => 'Même photo en double',
+            'rule' => 'similar_image',
+            'types' => ['similar_image'],
+            'target' => 'images',
+        ],
+        [
             'label' => 'Longueur du H1 (titre)',
             'rule' => 'long_title',
             'types' => ['long_title'],
@@ -143,13 +155,27 @@ class AuditPanelPresenter
                 break;
 
             case 'image_possibly_incoherent':
-                if (! empty($meta['image_terms'])) {
-                    $details[] = 'Mots décrivant l’image : '.implode(', ', array_slice($meta['image_terms'], 0, 6));
+                // Les trois critères : titre, contexte de l'article, précision.
+                $criterionLabels = ['title' => 'Titre', 'context' => 'Contexte', 'precision' => 'Précision'];
+                $marks = ['pass' => '✓', 'fail' => '✗', 'uncertain' => '?'];
+
+                foreach ($criterionLabels as $key => $label) {
+                    $criterion = $meta['criteria'][$key] ?? null;
+
+                    if (is_array($criterion) && isset($criterion['verdict'])) {
+                        $details[] = ($marks[$criterion['verdict']] ?? '?').' '.$label.' : '.($criterion['explanation'] ?? '');
+                    }
                 }
-                $details[] = empty($meta['matched_terms'])
-                    ? 'Aucun de ces mots ne figure dans l’article.'
-                    : 'Mots communs avec l’article : '.implode(', ', array_slice($meta['matched_terms'], 0, 6));
-                if (isset($meta['score'])) {
+
+                if (($meta['source'] ?? null) !== 'vision') {
+                    if (! empty($meta['image_terms'])) {
+                        $details[] = 'Mots décrivant l’image : '.implode(', ', array_slice($meta['image_terms'], 0, 6));
+                    }
+                    $details[] = empty($meta['matched_terms'])
+                        ? 'Aucun de ces mots ne figure dans l’article.'
+                        : 'Mots communs avec l’article : '.implode(', ', array_slice($meta['matched_terms'], 0, 6));
+                }
+                if (isset($meta['score']) && ($meta['source'] ?? null) !== 'vision') {
                     $details[] = sprintf(
                         'Cohérence estimée : %d %% (seuil : %d %%)',
                         round((float) $meta['score'] * 100),
@@ -157,6 +183,26 @@ class AuditPanelPresenter
                     );
                 }
                 $hint = 'Vérifiez que l’image illustre bien le sujet, ou précisez son texte alternatif.';
+                break;
+
+            case 'duplicate_image':
+                $positions = array_map('intval', (array) ($meta['positions'] ?? []));
+                if ($positions !== []) {
+                    $last = array_pop($positions);
+                    $details[] = 'Images n° '.($positions !== [] ? implode(', ', $positions).' et ' : '').$last.' du contenu : même fichier.';
+                }
+                $hint = 'Retirez la ou les copies, ou remplacez-les par une autre image.';
+                break;
+
+            case 'similar_image':
+                $files = array_map('strval', (array) ($meta['files'] ?? []));
+                if ($files !== []) {
+                    $details[] = 'Fichiers : '.implode(' · ', $files);
+                }
+                $details[] = 'Ces fichiers montrent la même photo (comparaison visuelle).';
+                $hint = ! empty($meta['includes_featured'])
+                    ? 'Le thème affiche déjà l’image à la une en tête d’article : remplacez l’image du contenu par une autre, ou retirez-la.'
+                    : 'Remplacez l’une des copies par une autre image, ou retirez-la.';
                 break;
 
             case 'body_image_broken':
@@ -194,7 +240,7 @@ class AuditPanelPresenter
                 foreach (array_slice((array) ($meta['headings'] ?? []), 0, 5) as $heading) {
                     $details[] = 'H1 : '.($heading !== '' ? $heading : '(vide)');
                 }
-                $hint = 'Conservez un seul H1 : le titre de l’article en tient déjà lieu, passez les autres en H2.';
+                $hint = 'Le titre de l’article est déjà le H1 de la page : passez les H1 du contenu en H2.';
                 break;
 
             case 'missing_h2':

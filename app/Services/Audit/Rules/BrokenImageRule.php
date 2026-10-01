@@ -78,9 +78,7 @@ class BrokenImageRule implements AuditRule
 
             // Le cache d'analyses évite de retélécharger une URL déjà vue par
             // une autre règle ou par un audit précédent.
-            $analysis = $context->allowNetwork
-                ? $this->analyzer->analyze($src)
-                : $this->analyzer->cached($src);
+            $analysis = $context->imageAnalysis($this->analyzer, $src);
 
             if ($analysis === null || ! $this->isBroken($analysis)) {
                 continue;

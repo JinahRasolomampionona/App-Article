@@ -37,6 +37,7 @@
                         <th scope="col">Site</th>
                         <th scope="col">Article</th>
                         <th scope="col">Statut</th>
+                        <th scope="col">Date de correction</th>
                         <th scope="col">Erreurs corrigées</th>
                         <th scope="col">Commentaires</th>
                         <th scope="col" class="text-end">Actions</th>
@@ -71,7 +72,20 @@
                                 <span class="ag-badge ag-badge--success">
                                     <i class="bi bi-check2-circle" aria-hidden="true"></i> Corrigé
                                 </span>
-                                <span class="ag-hint d-block mt-1">le {{ $article->completed_at->translatedFormat('d/m/Y H:i') }}</span>
+                            @endif
+                        </td>
+
+                        {{-- Date à laquelle l'agent a déclaré l'article corrigé ;
+                             pour un article en cours, date de prise en charge. --}}
+                        <td class="text-nowrap">
+                            @if($inProgress)
+                                <span class="ag-hint">Pas encore corrigé</span>
+                                @if($article->locked_at)
+                                    <span class="ag-hint d-block">pris le {{ $article->locked_at->translatedFormat('d/m/Y') }}</span>
+                                @endif
+                            @else
+                                <span class="fw-semibold">{{ $article->completed_at->translatedFormat('d/m/Y') }}</span>
+                                <span class="ag-hint d-block">à {{ $article->completed_at->translatedFormat('H:i') }}</span>
                             @endif
                         </td>
 
@@ -156,7 +170,7 @@
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="6">
+                        <td colspan="7">
                             <p class="ag-hint mb-0 py-4 text-center">
                                 {{ $agent->name }} n’a aucun article en cours ni corrigé
                                 @if($siteFilter) sur ce site @endif.

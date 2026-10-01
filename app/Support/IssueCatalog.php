@@ -45,6 +45,18 @@ class IssueCatalog
             'icon' => 'image',
             'target' => 'content',
         ],
+        'duplicate_image' => [
+            'label' => 'Image en double',
+            'short' => 'Doublon',
+            'icon' => 'image',
+            'target' => 'images',
+        ],
+        'similar_image' => [
+            'label' => 'Image en double (même photo)',
+            'short' => 'Doublon',
+            'icon' => 'image',
+            'target' => 'images',
+        ],
         'image_blurry' => [
             'label' => 'Image potentiellement floue',
             'short' => 'Netteté',
@@ -76,8 +88,8 @@ class IssueCatalog
             'target' => 'title',
         ],
         'multiple_h1' => [
-            'label' => 'Plusieurs balises H1 détectées',
-            'short' => 'H1 multiples',
+            'label' => 'Problème balise H1',
+            'short' => 'Balise H1',
             'icon' => 'heading',
             'target' => 'content',
         ],

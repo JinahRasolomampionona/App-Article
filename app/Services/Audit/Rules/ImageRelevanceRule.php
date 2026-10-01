@@ -3,6 +3,7 @@
 namespace App\Services\Audit\Rules;
 
 use App\Services\Audit\AuditContext;
+use App\Services\Audit\ImageQualityAnalyzer;
 use App\Services\Audit\Issue;
 use App\Services\Audit\Relevance\ImageRelevanceAnalyzerInterface;
 use App\Services\Audit\Relevance\RelevanceResult;
@@ -25,6 +26,7 @@ class ImageRelevanceRule implements AuditRule
 
     public function __construct(
         protected ImageRelevanceAnalyzerInterface $analyzer,
+        protected ?ImageQualityAnalyzer $images = null,
     ) {}
 
     public function key(): string
@@ -61,7 +63,13 @@ class ImageRelevanceRule implements AuditRule
         ];
 
         $issues = [];
-        $candidates = array_map(fn (array $image) => $image + ['url' => $image['src']], $this->analyzableImages($context));
+        $candidates = array_map(fn (array $image) => $image + [
+            'url' => $image['src'],
+            // Empreinte du fichier (déjà mesurée par la règle de netteté) : un
+            // fichier remplacé sous la même URL est réanalysé, pas jugé sur
+            // l'ancien verdict mémorisé.
+            'fingerprint' => $this->fingerprint($image['src']),
+        ], $this->analyzableImages($context));
 
         foreach ($candidates as $candidate) {
             $result = $this->analyzer->analyze($candidate, $articlePayload);
@@ -84,6 +92,8 @@ class ImageRelevanceRule implements AuditRule
                     'scope' => $candidate['scope'],
                     'score' => $result->score,
                     'reason' => $result->reason,
+                    'source' => $result->details['source'] ?? null,
+                    'criteria' => $result->details['criteria'] ?? [],
                     'image_terms' => $result->details['image_terms'] ?? [],
                     'matched_terms' => $result->details['matched_terms'] ?? [],
                     'verdict' => RelevanceResult::POSSIBLY_INCOHERENT,
@@ -92,5 +102,12 @@ class ImageRelevanceRule implements AuditRule
         }
 
         return $issues;
+    }
+
+    protected function fingerprint(string $src): string
+    {
+        $analysis = $this->images?->cached($src);
+
+        return $analysis === null ? '' : implode(':', [$analysis->bytes, $analysis->width, $analysis->height]);
     }
 }

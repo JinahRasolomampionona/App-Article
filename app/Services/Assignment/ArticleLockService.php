@@ -78,7 +78,9 @@ class ArticleLockService
                     'completed_by' => null,
                 ]);
 
-            if ($updated !== 1) {
+            // 0 ligne « modifiée » peut aussi vouloir dire « valeurs identiques »
+            // (même agent, même seconde) : seul un autre détenteur est un échec.
+            if ($updated !== 1 && ! $this->stillHeldBy($current, $agent)) {
                 $fresh = $current->fresh('assignee');
 
                 throw ArticleLockedException::heldBy($fresh?->activeAgentName());
@@ -176,7 +178,11 @@ class ArticleLockService
             ->where('lock_expires_at', '>', now())
             ->update(['lock_expires_at' => $expiresAt]);
 
-        if ($updated !== 1) {
+        // MySQL compte les lignes *modifiées*, pas les lignes trouvées : deux
+        // battements dans la même seconde (retour sur l'onglet + minuterie,
+        // deux onglets ouverts…) écrivent la même échéance et renvoient 0.
+        // Ce n'est pas une perte du verrou : on relit avant de conclure.
+        if ($updated !== 1 && ! $this->stillHeldBy($article, $user)) {
             throw ArticleLockedException::notHeld();
         }
 
@@ -310,6 +316,19 @@ class ArticleLockService
         }
 
         return $last->user;
+    }
+
+    /**
+     * Relecture directe en base : l'utilisateur détient-il toujours un verrou
+     * valide sur l'article ?
+     */
+    protected function stillHeldBy(WordpressArticle $article, User $user): bool
+    {
+        return WordpressArticle::query()
+            ->whereKey($article->id)
+            ->where('assigned_to', $user->id)
+            ->where('lock_expires_at', '>', now())
+            ->exists();
     }
 
     protected function lockRow(WordpressArticle $article): WordpressArticle

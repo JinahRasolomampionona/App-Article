@@ -83,18 +83,61 @@ class HeuristicImageRelevanceAnalyzer implements ImageRelevanceAnalyzerInterface
             ? RelevanceResult::RELEVANT
             : RelevanceResult::POSSIBLY_INCOHERENT;
 
+        // Les trois critères de cohérence, tels que l'heuristique peut les
+        // approcher sans voir l'image : titre, contexte (corps de l'article),
+        // précision de la description.
+        $bodyTokens = $this->tokenize(implode(' ', [
+            $image['surrounding_text'] ?? '',
+            mb_substr((string) ($article['text'] ?? ''), 0, 5000),
+        ]));
+        $contextShare = count(array_intersect($imageTokens, $bodyTokens)) / max(1, count($imageTokens));
+
+        $criteria = [
+            'title' => $this->criterion($titleCoverage, $threshold, [
+                'pass' => 'La description de l’image reprend le sujet du titre.',
+                'fail' => 'La description de l’image ne reprend aucun mot du titre.',
+            ]),
+            'context' => $this->criterion($contextShare, $threshold, [
+                'pass' => 'La description de l’image se retrouve dans le contenu de l’article.',
+                'fail' => 'La description de l’image ne correspond à rien dans le contenu de l’article.',
+            ]),
+            'precision' => count($imageTokens) >= 2 && $matches !== []
+                ? ['verdict' => 'pass', 'explanation' => 'L’image est décrite avec des termes précis liés au sujet.']
+                : ['verdict' => 'uncertain', 'explanation' => 'Description trop courte pour juger de la précision de l’image.'],
+        ];
+
+        $failed = array_keys(array_filter($criteria, fn (array $c) => $c['verdict'] === 'fail'));
+        $labels = ['title' => 'le titre', 'context' => 'le contenu de l’article', 'precision' => 'le sujet précis'];
+
         return new RelevanceResult(
             $verdict,
             round($score, 3),
             $verdict === RelevanceResult::POSSIBLY_INCOHERENT
-                ? "Le vocabulaire décrivant l'image recoupe peu celui de l'article."
+                ? ($failed !== []
+                    ? 'Image sans rapport visible avec '.implode(' ni avec ', array_map(fn ($key) => $labels[$key], $failed)).'.'
+                    : "Le vocabulaire décrivant l'image recoupe peu celui de l'article.")
                 : null,
             [
+                'source' => 'heuristic',
+                'criteria' => $criteria,
                 'matched_terms' => array_slice($matches, 0, 10),
                 'image_terms' => array_slice($imageTokens, 0, 10),
                 'threshold' => $threshold,
             ],
         );
+    }
+
+    /**
+     * @param  array{pass: string, fail: string}  $messages
+     * @return array{verdict: string, explanation: string}
+     */
+    protected function criterion(float $share, float $threshold, array $messages): array
+    {
+        return match (true) {
+            $share >= $threshold => ['verdict' => 'pass', 'explanation' => $messages['pass']],
+            $share <= 0.0 => ['verdict' => 'fail', 'explanation' => $messages['fail']],
+            default => ['verdict' => 'uncertain', 'explanation' => 'Correspondance partielle : à vérifier visuellement.'],
+        };
     }
 
     /**

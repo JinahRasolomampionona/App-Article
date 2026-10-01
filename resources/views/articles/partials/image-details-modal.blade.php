@@ -17,7 +17,19 @@
                 <div class="ag-image-details">
                     <div class="ag-image-details__preview">
                         <img data-details-preview src="" alt="" loading="lazy">
-                        <span class="ag-hint d-block mt-2 text-break ag-mono" data-details-filename></span>
+
+                        {{-- Nom du fichier, modifiable : WordPress ne renomme pas un
+                             fichier existant, une copie renommée est donc créée. --}}
+                        <label class="form-label small mb-1 mt-2" for="ag-details-name">Nom du fichier</label>
+                        <div class="input-group input-group-sm">
+                            <input type="text" id="ag-details-name" class="form-control ag-mono"
+                                   data-details-name maxlength="120" spellcheck="false" autocomplete="off">
+                            <span class="input-group-text ag-mono" data-details-extension></span>
+                        </div>
+                        <div class="ag-hint mt-1" data-details-name-hint>
+                            Modifier le nom crée une copie renommée dans la médiathèque WordPress ;
+                            l’article utilisera ce nouveau fichier.
+                        </div>
                     </div>
 
                     <div class="ag-image-details__fields">

@@ -9,12 +9,14 @@ use App\Policies\UserPolicy;
 use App\Policies\WordpressArticlePolicy;
 use App\Policies\WordpressSitePolicy;
 use App\Services\Audit\AuditService;
+use App\Services\Audit\Relevance\ClaudeVisionImageRelevanceAnalyzer;
 use App\Services\Audit\Relevance\HeuristicImageRelevanceAnalyzer;
 use App\Services\Audit\Relevance\ImageRelevanceAnalyzerInterface;
 use App\Services\Audit\Relevance\NullImageRelevanceAnalyzer;
 use App\Services\Audit\Rules\AuditRule;
 use App\Services\Audit\Rules\BodyImageRule;
 use App\Services\Audit\Rules\BrokenImageRule;
+use App\Services\Audit\Rules\DuplicateImageRule;
 use App\Services\Audit\Rules\FeaturedImageRule;
 use App\Services\Audit\Rules\H1Rule;
 use App\Services\Audit\Rules\H2Rule;
@@ -22,6 +24,7 @@ use App\Services\Audit\Rules\ImageBlurRule;
 use App\Services\Audit\Rules\ImageRelevanceRule;
 use App\Services\Audit\Rules\LongTitleRule;
 use App\Services\Audit\Rules\ShortcodeRule;
+use App\Services\Audit\Rules\SimilarImageRule;
 use App\Services\QueueHealth;
 use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
@@ -52,8 +55,10 @@ class AppServiceProvider extends ServiceProvider
         LongTitleRule::class,
         H1Rule::class,
         H2Rule::class,
+        DuplicateImageRule::class,
         BrokenImageRule::class,
         ImageBlurRule::class,
+        SimilarImageRule::class,
         ImageRelevanceRule::class,
     ];
 
@@ -63,11 +68,14 @@ class AppServiceProvider extends ServiceProvider
         // requête, quel que soit le nombre de composants qui la consultent.
         $this->app->scoped(SiteContext::class);
 
-        $this->app->bind(ImageRelevanceAnalyzerInterface::class, function () {
+        $this->app->bind(ImageRelevanceAnalyzerInterface::class, function ($app) {
             return match (config('articleguard.relevance.driver')) {
                 'heuristic' => new HeuristicImageRelevanceAnalyzer,
-                // Un fournisseur de vision distant viendra s'enregistrer ici ;
-                // tant qu'aucune clé n'est configurée, l'analyse reste inactive.
+                // Vision (Claude) : l'image est réellement regardée. Sans clé
+                // configurée, repli sur l'heuristique plutôt que rien.
+                'vision', 'claude' => ($vision = $app->make(ClaudeVisionImageRelevanceAnalyzer::class))->isAvailable()
+                    ? $vision
+                    : new HeuristicImageRelevanceAnalyzer,
                 default => new NullImageRelevanceAnalyzer,
             };
         });

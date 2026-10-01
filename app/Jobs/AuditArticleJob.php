@@ -40,6 +40,10 @@ class AuditArticleJob implements ShouldQueue
             AuditSettings::forUser($article->site?->user),
             allowNetwork: true,
             trigger: $this->trigger,
+            // Après un enregistrement, les images de l'article sont revues
+            // telles qu'elles sont maintenant sur le site, pas d'après le
+            // résultat mémorisé.
+            freshImages: $this->trigger === 'save',
         );
     }
 

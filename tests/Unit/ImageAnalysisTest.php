@@ -12,6 +12,7 @@ use App\Services\Audit\Relevance\NullImageRelevanceAnalyzer;
 use App\Services\Audit\Relevance\RelevanceResult;
 use App\Services\Audit\Rules\ImageBlurRule;
 use App\Services\Audit\Rules\ImageRelevanceRule;
+use App\Services\Audit\Rules\SimilarImageRule;
 use App\Support\UrlGuard;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -100,6 +101,81 @@ class ImageAnalysisTest extends TestCase
         $this->assertSame('image_blurry', $issues[0]->type);
         $this->assertSame('Image potentiellement floue', $issues[0]->message);
         $this->assertSame('content', $issues[0]->metadata['scope']);
+    }
+
+    public function test_un_audit_frais_ignore_l_analyse_memorisee_et_ne_telecharge_qu_une_fois(): void
+    {
+        $article = new WordpressArticle([
+            'title' => 'Bague',
+            'content' => '<p>Texte.</p><img src="https://example.com/bague.png" alt="Bague">',
+        ]);
+        $analyzer = new ImageQualityAnalyzer(new UrlGuard);
+
+        // Première analyse : l'image était floue, le résultat est mémorisé.
+        // Ensuite, le fichier est remplacé sur le site, sous la même URL.
+        Http::fake(['*' => Http::sequence()
+            ->push($this->flatPng(), 200, ['Content-Type' => 'image/png'])
+            ->push($this->checkerboardPng(), 200, ['Content-Type' => 'image/png'])]);
+        $analyzer->analyze('https://example.com/bague.png');
+
+        $stale = (new ImageBlurRule($analyzer))
+            ->evaluate(new AuditContext($article, AuditSettings::defaults(), allowNetwork: true));
+        $this->assertSame('image_blurry', $stale[0]->type ?? null);
+
+        $context = new AuditContext($article, AuditSettings::defaults(), allowNetwork: true, freshImages: true);
+        $fresh = (new ImageBlurRule($analyzer))->evaluate($context);
+        (new ImageBlurRule($analyzer))->evaluate($context);
+
+        $this->assertSame([], array_filter($fresh, fn ($issue) => $issue->type === 'image_blurry'));
+        // Analyse initiale + un seul re-téléchargement pour les deux passages.
+        Http::assertSentCount(2);
+    }
+
+    /* --- Même photo sous deux fichiers ---------------------------------------- */
+
+    public function test_l_image_a_la_une_televersee_deux_fois_et_reprise_dans_le_contenu_est_signalee(): void
+    {
+        Http::fake([
+            'https://example.com/uploads/bague.jpg' => Http::response($this->photo(1, quality: 90), 200, ['Content-Type' => 'image/jpeg']),
+            // Même photo, téléversée une seconde fois et recompressée.
+            'https://example.com/uploads/bague-1.jpg' => Http::response($this->photo(1, quality: 55), 200, ['Content-Type' => 'image/jpeg']),
+            'https://example.com/uploads/collier.jpg' => Http::response($this->photo(2, quality: 90), 200, ['Content-Type' => 'image/jpeg']),
+        ]);
+
+        $article = new WordpressArticle([
+            'title' => 'Bague',
+            'featured_media_id' => 5,
+            'featured_media_url' => 'https://example.com/uploads/bague.jpg',
+            'content' => '<p>Texte.</p><img src="https://example.com/uploads/collier.jpg">'
+                .'<img src="https://example.com/uploads/bague-1.jpg" alt="Bague">',
+        ]);
+
+        $issues = (new SimilarImageRule(new ImageQualityAnalyzer(new UrlGuard)))
+            ->evaluate(new AuditContext($article, AuditSettings::defaults(), allowNetwork: true));
+
+        $this->assertCount(1, $issues);
+        $this->assertSame('similar_image', $issues[0]->type);
+        $this->assertSame('Image en double : l’image à la une est répétée dans le contenu', $issues[0]->message);
+        $this->assertSame('https://example.com/uploads/bague-1.jpg', $issues[0]->metadata['src']);
+        $this->assertSame([2], $issues[0]->metadata['positions']);
+    }
+
+    public function test_des_photos_differentes_ne_sont_pas_des_doublons(): void
+    {
+        Http::fake([
+            'https://example.com/a.jpg' => Http::response($this->photo(1), 200, ['Content-Type' => 'image/jpeg']),
+            'https://example.com/b.jpg' => Http::response($this->photo(2), 200, ['Content-Type' => 'image/jpeg']),
+        ]);
+
+        $article = new WordpressArticle([
+            'title' => 'Bijoux',
+            'content' => '<img src="https://example.com/a.jpg"><img src="https://example.com/b.jpg">',
+        ]);
+
+        $issues = (new SimilarImageRule(new ImageQualityAnalyzer(new UrlGuard)))
+            ->evaluate(new AuditContext($article, AuditSettings::defaults(), allowNetwork: true));
+
+        $this->assertSame([], $issues);
     }
 
     public function test_la_section_hero_est_exclue_de_l_analyse_de_flou(): void
@@ -328,6 +404,30 @@ class ImageAnalysisTest extends TestCase
 
         ob_start();
         imagepng($image);
+        imagedestroy($image);
+
+        return (string) ob_get_clean();
+    }
+
+    /**
+     * « Photo » synthétique : dégradé et formes, différents selon `$variant`.
+     */
+    protected function photo(int $variant, int $quality = 85): string
+    {
+        $image = imagecreatetruecolor(320, 240);
+
+        for ($x = 0; $x < 320; $x++) {
+            $shade = $variant === 1 ? (int) ($x * 255 / 319) : 255 - (int) ($x * 255 / 319);
+            imageline($image, $x, 0, $x, 239, imagecolorallocate($image, $shade, (int) ($shade / 2), 120));
+        }
+
+        $white = imagecolorallocate($image, 255, 255, 255);
+        $variant === 1
+            ? imagefilledellipse($image, 220, 120, 120, 120, $white)
+            : imagefilledrectangle($image, 20, 140, 140, 230, $white);
+
+        ob_start();
+        imagejpeg($image, null, $quality);
         imagedestroy($image);
 
         return (string) ob_get_clean();

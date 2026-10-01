@@ -292,5 +292,27 @@
             </div>
         </div>
     @endforelse
+
+    {{-- Vider le cache des pages (WP Rocket, LiteSpeed…) après correction. --}}
+    @if($isAdmin && $sites->isNotEmpty())
+        <div class="ag-card">
+            <div class="ag-card__body d-flex flex-wrap align-items-center gap-3">
+                <i class="bi bi-lightning-charge fs-4 text-primary" aria-hidden="true"></i>
+                <div class="flex-grow-1" style="min-width: 16rem;">
+                    <p class="fw-semibold mb-1">Vider le cache WordPress après chaque correction</p>
+                    <p class="ag-hint mb-0">
+                        Sur un site équipé d’un cache de page (WP Rocket, LiteSpeed Cache, W3 Total Cache,
+                        WP Super Cache…), installez l’extension <strong>ArticleGuard Cache Bridge</strong> :
+                        le cache de l’article est alors vidé à chaque « Mettre à jour », et les visiteurs
+                        voient la correction immédiatement. WordPress › Extensions › Ajouter ›
+                        Téléverser une extension, puis Activer.
+                    </p>
+                </div>
+                <a href="{{ route('sites.cache-bridge') }}" class="btn btn-sm btn-outline-primary">
+                    <i class="bi bi-download me-1" aria-hidden="true"></i> Télécharger l’extension
+                </a>
+            </div>
+        </div>
+    @endif
 </div>
 @endsection

@@ -98,6 +98,44 @@ class MediaController extends Controller
         ]);
     }
 
+    /**
+     * Renomme une image du contenu (copie sous le nouveau nom, voir
+     * WordPressMediaService::renameCopy()).
+     */
+    public function rename(Request $request, WordpressSite $site): JsonResponse
+    {
+        $this->authorize('manageMedia', $site);
+
+        $validated = $request->validate([
+            'src' => ['required', 'string', 'max:2048', 'regex:#^(https?:)?//|^/#i'],
+            'media_id' => ['nullable', 'integer', 'min:1'],
+            'name' => ['required', 'string', 'max:120', 'regex:/[\pL\pN]/u'],
+        ], [
+            'name.regex' => 'Le nom doit contenir au moins une lettre ou un chiffre.',
+            'src.regex' => 'Adresse de l’image invalide.',
+        ], ['name' => 'nom du fichier', 'src' => 'image']);
+
+        // Les URL relatives de l'article pointent vers le site lui-même.
+        $src = $validated['src'];
+        if (str_starts_with($src, '//')) {
+            $src = 'https:'.$src;
+        } elseif (str_starts_with($src, '/')) {
+            $src = rtrim($site->url, '/').$src;
+        }
+
+        try {
+            $media = $this->media->renameCopy($site, $src, $validated['media_id'] ?? null, $validated['name']);
+        } catch (WordPressApiException $e) {
+            return response()->json(['ok' => false, 'message' => $e->getMessage()], $e->status === 422 ? 422 : 502);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Image renommée « '.$media['filename'].' » dans la médiathèque WordPress.',
+            'media' => $media,
+        ]);
+    }
+
     public function store(Request $request, WordpressSite $site): JsonResponse
     {
         $this->authorize('manageMedia', $site);

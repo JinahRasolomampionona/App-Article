@@ -4,9 +4,11 @@ import { busy } from './busy.js';
 import { createMediaPicker } from './media-picker.js';
 import { createImageDetails } from './image-details.js';
 import { sanitizeHtml } from './sanitize-html.js';
+import { autop } from './autop.js';
 import { fileNameOf, safeUrl, sameUrl } from './url.js';
 import { blockLabel, createBlockIndicator, createLinkPopover, createOutline, currentBlock } from './editor-structure.js';
 import { initArticleLock } from './article-lock.js';
+import { bindDropzone, pickFile, preventStrayDrops, rejectReason } from './dropzone.js';
 
 /**
  * Éditeur d'article.
@@ -26,6 +28,12 @@ export function initEditor() {
     if (!root) {
         return;
     }
+
+    preventStrayDrops();
+
+    // Entrée crée un vrai paragraphe (<p>), comme dans WordPress, et non un
+    // <div> que le site afficherait sans espacement.
+    document.execCommand('defaultParagraphSeparator', false, 'p');
 
     const form = document.getElementById('ag-article-form');
     const surface = root.querySelector('[data-editor-surface]');
@@ -57,7 +65,9 @@ export function initEditor() {
     }
 
     function renderVisual() {
-        surface.innerHTML = sanitizeHtml(source.value);
+        // Contenu de l'éditeur classique : paragraphes et retours à la ligne
+        // sont rendus comme sur le site (wpautop), au lieu d'être fusionnés.
+        surface.innerHTML = sanitizeHtml(autop(source.value));
         visualDirty = false;
         // Les repères pointaient vers des éléments qui viennent d'être remplacés.
         linkPopover.hide();
@@ -236,6 +246,46 @@ export function initEditor() {
 
     /* --- Image mise en avant ------------------------------------------------ */
 
+    /**
+     * Téléverse un fichier dans la médiathèque WordPress (bouton
+     * « Téléverser » ou glisser-déposer) et renvoie le média créé.
+     */
+    async function uploadImage(file, zone) {
+        const reason = rejectReason(file);
+        if (reason) {
+            notify.error(reason);
+            return null;
+        }
+
+        zone?.classList.add('is-busy');
+
+        try {
+            const result = await picker.upload(file);
+            notify.success(result.message);
+            return result.media;
+        } catch (error) {
+            notify.error(error.message);
+            return null;
+        } finally {
+            zone?.classList.remove('is-busy');
+        }
+    }
+
+    const canDrop = () => picker.canUpload && form?.dataset.readonly !== '1';
+
+    const featuredZone = featuredWrapper?.querySelector('[data-featured-dropzone]');
+
+    bindDropzone(featuredZone, {
+        enabled: canDrop,
+        onDrop: async (file) => {
+            const media = await uploadImage(file, featuredZone);
+            if (media) {
+                setFeatured(media.id, media.url, media.alt);
+                notify.info('Image à la une remplacée. Cliquez sur « Mettre à jour » pour l’envoyer à WordPress.');
+            }
+        },
+    });
+
     featuredWrapper?.addEventListener('click', async (event) => {
         if (event.target.closest('[data-featured-replace]')) {
             const media = await picker.open();
@@ -266,9 +316,11 @@ export function initEditor() {
         const empty = featuredWrapper.querySelector('[data-featured-empty]');
         const removeButton = featuredWrapper.querySelector('[data-featured-remove]');
         const detailsButton = featuredWrapper.querySelector('[data-featured-details]');
+        const replaceButton = featuredWrapper.querySelector('[data-featured-replace]');
+
+        if (replaceButton) replaceButton.textContent = url ? 'Remplacer' : 'Choisir une image';
         const summary = featuredWrapper.querySelector('[data-featured-summary]');
         const altCell = featuredWrapper.querySelector('[data-featured-alt]');
-        const replaceButton = featuredWrapper.querySelector('[data-featured-replace]');
 
         if (url) {
             preview.src = url;
@@ -276,13 +328,11 @@ export function initEditor() {
             preview.hidden = false;
             empty.hidden = true;
             if (removeButton) removeButton.hidden = false;
-            if (replaceButton) replaceButton.textContent = 'Remplacer';
         } else {
             preview.hidden = true;
             preview.removeAttribute('src');
             empty.hidden = false;
             if (removeButton) removeButton.hidden = true;
-            if (replaceButton) replaceButton.textContent = 'Choisir une image';
         }
 
         if (detailsButton) detailsButton.hidden = !id;
@@ -308,9 +358,18 @@ export function initEditor() {
             return;
         }
 
+        // Même média présent plusieurs fois : signalé en direct, avant même
+        // le prochain audit.
+        const occurrences = images.reduce((counts, img) => {
+            const key = mediaKey(readImageSettings(img).src);
+            counts.set(key, (counts.get(key) ?? 0) + 1);
+            return counts;
+        }, new Map());
+
         imagesList.innerHTML = images
             .map((img, index) => {
                 const settings = readImageSettings(img);
+                const copies = occurrences.get(mediaKey(settings.src)) ?? 1;
 
                 return `
                 <div class="ag-image-row" data-image-index="${index}" data-image-src="${escapeAttribute(settings.src)}">
@@ -341,6 +400,13 @@ export function initEditor() {
                         }
                     </dl>
                     <div class="ag-image-row__tags">
+                        ${
+                            copies > 1
+                                ? `<span class="ag-badge ag-badge--warning" title="Cette image apparaît ${copies} fois dans le contenu">
+                                       <i class="bi bi-files" aria-hidden="true"></i> En double (${copies}×)
+                                   </span>`
+                                : ''
+                        }
                         <span class="ag-chip">${escapeHtml(ALIGN_LABELS[settings.align])}</span>
                         <span class="ag-chip">${escapeHtml(sizeLabel(settings))}</span>
                     </div>
@@ -348,9 +414,18 @@ export function initEditor() {
                         <button type="button" class="btn btn-sm btn-outline-primary" data-image-details>
                             <i class="bi bi-sliders me-1" aria-hidden="true"></i>Détails
                         </button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-image-replace>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-image-replace
+                                title="Remplacer par une image de la médiathèque">
                             <i class="bi bi-arrow-repeat me-1" aria-hidden="true"></i>Remplacer
                         </button>
+                        ${
+                            picker.canUpload
+                                ? `<button type="button" class="btn btn-sm btn-outline-secondary ag-image-row__icon" data-image-upload
+                                           title="Téléverser une nouvelle image" aria-label="Téléverser une image pour remplacer l’image ${index + 1}">
+                                       <i class="bi bi-upload" aria-hidden="true"></i>
+                                   </button>`
+                                : ''
+                        }
                         <button type="button" class="btn btn-sm btn-outline-danger" data-image-remove
                                 title="Retirer l’image" aria-label="Retirer l’image ${index + 1}">
                             <i class="bi bi-trash" aria-hidden="true"></i>
@@ -375,9 +450,25 @@ export function initEditor() {
             await replaceImageAt(index);
         }
 
+        if (event.target.closest('[data-image-upload]')) {
+            const file = await pickFile();
+            const media = file ? await uploadImage(file, row) : null;
+            if (media) replaceImageWith(index, media);
+        }
+
         if (event.target.closest('[data-image-remove]')) {
             removeImageAt(index);
         }
+    });
+
+    // Glisser une image sur une ligne : téléversée puis substituée à celle-ci.
+    bindDropzone(imagesList, {
+        selector: '[data-image-index]',
+        enabled: canDrop,
+        onDrop: async (file, row) => {
+            const media = await uploadImage(file, row);
+            if (media) replaceImageWith(Number(row.dataset.imageIndex), media);
+        },
     });
 
     /* --- Fenêtre « Détails de l'image » ------------------------------------- */
@@ -407,8 +498,47 @@ export function initEditor() {
             return;
         }
 
+        // Nouveau nom : copie renommée dans la médiathèque, puis l'image de
+        // l'article pointe vers ce fichier, à la même taille.
+        if (result.rename && form.dataset.readonly !== '1') {
+            const media = await renameImage(settings, result.rename);
+            if (!media) return;
+
+            const sizeName = result.size?.name ?? settings.sizeName;
+            const sized = media.sizes?.find((size) => size.name === sizeName);
+            const values = { ...result, size: sized ? { name: sized.name, url: sized.url } : null };
+
+            applyHtml(
+                mutateImage(currentHtml(), index, (img) => {
+                    replaceImage(img, media);
+                    applyImageSettings(img, values);
+                }),
+            );
+            notify.info('Image renommée. Cliquez sur « Mettre à jour » pour l’envoyer à WordPress.');
+            return;
+        }
+
         applyHtml(mutateImage(currentHtml(), index, (img) => applyImageSettings(img, result)));
         notify.info('Image modifiée. Cliquez sur « Mettre à jour » pour l’envoyer à WordPress.');
+    }
+
+    async function renameImage(settings, name) {
+        if (!picker.indexUrl) return null;
+
+        notify.info('Renommage de l’image en cours…');
+
+        try {
+            const data = await http.post(`${picker.indexUrl}/rename`, {
+                src: settings.src,
+                media_id: settings.mediaId,
+                name,
+            });
+            notify.success(data.message);
+            return data.media;
+        } catch (error) {
+            notify.error(error.message);
+            return null;
+        }
     }
 
     /** Réglages de la n-ième image, lus dans le HTML de référence. */
@@ -425,10 +555,14 @@ export function initEditor() {
         const media = await picker.open();
         if (!media) return false;
 
-        applyHtml(mutateImage(currentHtml(), index, (img) => replaceImage(img, media)));
-        notify.info('Image remplacée. Cliquez sur « Mettre à jour » pour l’envoyer à WordPress.');
+        replaceImageWith(index, media);
 
         return true;
+    }
+
+    function replaceImageWith(index, media) {
+        applyHtml(mutateImage(currentHtml(), index, (img) => replaceImage(img, media)));
+        notify.info('Image remplacée. Cliquez sur « Mettre à jour » pour l’envoyer à WordPress.');
     }
 
     function removeImageAt(index) {
@@ -669,11 +803,18 @@ export function initEditor() {
             // Une remarque sur une image précise mène à cette image dans la
             // liste « Images du contenu », à défaut à la liste entière.
             const src = item.dataset.auditSrc;
-            const row = src
-                ? Array.from(imagesList?.querySelectorAll('[data-image-src]') ?? []).find((candidate) =>
-                      sameUrl(candidate.dataset.imageSrc, src),
-                  )
-                : null;
+            const rows = Array.from(imagesList?.querySelectorAll('[data-image-src]') ?? []);
+
+            // Doublon : toutes les copies de l'image sont mises en évidence.
+            if (src && item.dataset.auditType === 'duplicate_image') {
+                const copies = rows.filter((candidate) => mediaKey(candidate.dataset.imageSrc) === mediaKey(src));
+                if (copies.length) {
+                    copies.forEach((copy, index) => (index === 0 ? scrollAndFlash(copy) : flash(copy)));
+                    return;
+                }
+            }
+
+            const row = src ? rows.find((candidate) => sameUrl(candidate.dataset.imageSrc, src)) : null;
             scrollAndFlash(row ?? imagesList);
         } else {
             setMode('visual');
@@ -729,16 +870,30 @@ export function initEditor() {
         }, 10000);
 
         const payload = currentPayload();
+        const sent = JSON.stringify(payload);
 
         try {
-            const data = await http.put(form.dataset.url, payload);
+            let data = await http.put(form.dataset.url, payload);
+
+            // Envoi en arrière-plan : l'éditeur reste utilisable, seul ce
+            // bouton suit l'avancement jusqu'à la confirmation de WordPress.
+            if (data.pending) {
+                clearTimeout(slowNotice);
+                setButtonLabel(button, 'Envoi en arrière-plan…');
+                notify.info('Envoi à WordPress en cours : vous pouvez continuer à travailler.');
+                data = await waitForSave(data.status_url, button);
+            }
 
             notify.success(data.message);
 
-            // Le contenu renvoyé par WordPress devient la nouvelle référence.
-            source.value = payload.content;
-            visualDirty = false;
-            savedSnapshot = JSON.stringify(currentPayload());
+            // Ce qui a été envoyé devient la référence. Si l'utilisateur a
+            // continué à modifier pendant l'envoi, ses changements restent
+            // « non enregistrés » et ne sont surtout pas écrasés.
+            if (JSON.stringify(currentPayload()) === sent) {
+                source.value = payload.content;
+                visualDirty = false;
+            }
+            savedSnapshot = sent;
 
             updateAuditPanel(data.audit);
 
@@ -758,6 +913,58 @@ export function initEditor() {
             done();
         }
     }
+
+    function setButtonLabel(button, text) {
+        const label = button?.lastChild;
+        if (label?.nodeType === Node.TEXT_NODE) {
+            label.textContent = text;
+        }
+    }
+
+    /**
+     * Suit un enregistrement en arrière-plan jusqu'à sa fin. Résout avec la
+     * réponse finale (message, audit) ; rejette comme l'aurait fait l'envoi
+     * direct (409 si l'article n'est plus à nous, message lisible sinon).
+     */
+    async function waitForSave(statusUrl, button) {
+        const startedAt = Date.now();
+
+        for (;;) {
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+
+            let data;
+
+            try {
+                data = await http.get(statusUrl);
+            } catch (error) {
+                // Coupure réseau passagère : l'envoi continue côté serveur,
+                // on réessaie. Une vraie erreur (4xx/5xx) est remontée.
+                if (error.status) throw error;
+                continue;
+            }
+
+            if (data.status === 'done') return data;
+
+            const seconds = Math.round((Date.now() - startedAt) / 1000);
+            if (seconds >= 10) {
+                setButtonLabel(button, `WordPress enregistre… ${seconds} s`);
+            }
+        }
+    }
+
+    document.querySelector('[data-purge-cache]')?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        const done = busy(button, 'Vidage du cache…');
+
+        try {
+            const data = await http.post(button.dataset.purgeCache, {});
+            notify.success(data.message);
+        } catch (error) {
+            notify.error(error.message);
+        } finally {
+            done();
+        }
+    });
 
     form?.addEventListener('submit', async (event) => {
         event.preventDefault();
@@ -847,8 +1054,29 @@ function scrollAndFlash(element) {
     if (!element) return;
 
     element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    flash(element);
+}
+
+function flash(element) {
     element.classList.add('ag-row-flash');
     setTimeout(() => element.classList.remove('ag-row-flash'), 1500);
+}
+
+/**
+ * Identité d'un média indépendante de sa taille (même règle que l'audit,
+ * SelectsContentImages::mediaKey) : `photo-1024x768.jpg` et `photo.jpg` sont
+ * la même image.
+ */
+function mediaKey(src) {
+    let path = String(src ?? '');
+
+    try {
+        path = new URL(path, window.location.origin).pathname;
+    } catch {
+        // URL inexploitable : comparée telle quelle.
+    }
+
+    return path.toLowerCase().replace(/(-\d{2,5}x\d{2,5}|-scaled)+(?=\.[a-z0-9]+$)/, '');
 }
 
 /**

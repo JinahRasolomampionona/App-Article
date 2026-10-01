@@ -275,7 +275,10 @@ class ArticleManagementTest extends TestCase
             ->assertJsonPath('ok', true);
 
         $this->assertSame('Nouveau titre', $article->fresh()->title);
-        Http::assertSentCount(2);
+
+        // Une écriture puis une relecture : l'écriture n'est jamais renvoyée
+        // (la demande de vidage du cache, elle, est un autre appel).
+        $this->assertCount(2, Http::recorded(fn ($request) => str_contains($request->url(), '/wp/v2/posts/')));
     }
 
     public function test_une_mise_a_jour_expiree_non_confirmee_affiche_une_erreur(): void

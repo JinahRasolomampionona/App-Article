@@ -73,15 +73,18 @@ class AuditService
      *
      * @param  bool  $allowNetwork  false pour un audit instantané, sans
      *                              téléchargement d'images
+     * @param  bool  $freshImages  ignorer les analyses d'images mémorisées
+     *                             (après une correction)
      */
     public function run(
         WordpressArticle $article,
         ?AuditSettings $settings = null,
         bool $allowNetwork = true,
         string $trigger = 'manual',
+        bool $freshImages = false,
     ): ArticleAudit {
         $settings ??= AuditSettings::forUser($article->site?->user);
-        $context = new AuditContext($article, $settings, $allowNetwork);
+        $context = new AuditContext($article, $settings, $allowNetwork, $freshImages);
 
         $startedAt = microtime(true);
         $issues = [];

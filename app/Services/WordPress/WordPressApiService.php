@@ -497,6 +497,48 @@ class WordPressApiService
     }
 
     /**
+     * Vide le cache de page de l'article sur le site (WP Rocket, LiteSpeed…)
+     * via l'extension « ArticleGuard Cache Bridge ».
+     *
+     * @return array<int, string>|null caches vidés ; `null` si l'extension
+     *                                 n'est pas installée sur le site
+     *
+     * @throws WordPressApiException toute autre erreur
+     */
+    public function purgePostCache(WordpressSite $site, int $wpId): ?array
+    {
+        if (! $site->hasCredentials()) {
+            return null;
+        }
+
+        $url = $this->apiRoot($site).'/articleguard/v1/purge/'.$wpId;
+
+        try {
+            $this->guard->assertSafe($url);
+        } catch (UnsafeUrlException $e) {
+            throw new WordPressApiException($e->getMessage(), 'unsafe_url', null, ['url' => $url], $e);
+        }
+
+        try {
+            $response = $this->request($site, write: true)->timeout(20)->post($url);
+        } catch (ConnectionException $e) {
+            throw WordPressApiException::unreachable($url, $e);
+        }
+
+        // Route inconnue : l'extension n'est pas installée sur ce site. Ce
+        // n'est pas une erreur, simplement une fonction indisponible.
+        if ($response->status() === 404 && $response->json('code') === 'rest_no_route') {
+            return null;
+        }
+
+        if (! $response->successful()) {
+            throw $this->translate($response, $site, $url);
+        }
+
+        return array_values(array_filter((array) ($this->decode($response)['purged'] ?? []), 'is_string'));
+    }
+
+    /**
      * Version d'édition d'un article, allégée comme la réponse d'une écriture.
      *
      * Sert à vérifier une mise à jour dont la réponse n'est pas arrivée :

@@ -44,7 +44,14 @@ export function initArticleLock({ isDirty, save, setReadOnly }) {
     if (panel.dataset.state === 'mine') {
         const every = Math.max(15, Number(panel.dataset.heartbeatSeconds || 60)) * 1000;
 
+        // Un seul battement à la fois : retour sur l'onglet et minuterie
+        // peuvent tomber dans la même seconde.
+        let beating = false;
+
         const beat = async () => {
+            if (beating || panel.dataset.state !== 'mine') return;
+            beating = true;
+
             try {
                 await http.post(panel.dataset.heartbeatUrl, {});
             } catch (error) {
@@ -53,6 +60,8 @@ export function initArticleLock({ isDirty, save, setReadOnly }) {
                 if (error.status === 409 || error.status === 403) {
                     lost(error.message);
                 }
+            } finally {
+                beating = false;
             }
         };
 

@@ -171,7 +171,7 @@ class SyncAndAuditTest extends TestCase
             'title' => 'Titre court',
             'featured_media_id' => 8,
             'featured_media_url' => 'https://example.com/ok.jpg',
-            'content' => '<h1>Unique</h1><h2>Section</h2><p>Texte.</p><img src="https://example.com/c.jpg" alt="Bague">',
+            'content' => '<h2>Section</h2><p>Texte.</p><img src="https://example.com/c.jpg" alt="Bague">',
         ])->save();
 
         $audit->run($article->refresh(), AuditSettings::defaults(), allowNetwork: false);
@@ -261,7 +261,7 @@ class SyncAndAuditTest extends TestCase
             'title' => 'Titre court',
             'featured_media_id' => 4,
             'featured_media_url' => 'https://example.com/a.jpg',
-            'content' => '<h1>Unique</h1><h2>Section</h2><p>Texte.</p><img src="https://example.com/b.jpg" alt="Bague">',
+            'content' => '<h2>Section</h2><p>Texte.</p><img src="https://example.com/b.jpg" alt="Bague">',
         ]);
 
         app(AuditService::class)->run($article, AuditSettings::defaults(), allowNetwork: false);

@@ -10,9 +10,13 @@ class ImageAnalysis extends Model
     use HasFactory;
 
     public const STATUS_OK = 'ok';
+
     public const STATUS_UNREACHABLE = 'unreachable';
+
     public const STATUS_UNSUPPORTED = 'unsupported';
+
     public const STATUS_TOO_LARGE = 'too_large';
+
     public const STATUS_BLOCKED = 'blocked';
 
     protected $fillable = [
@@ -26,6 +30,7 @@ class ImageAnalysis extends Model
         'mime',
         'sharpness',
         'is_blurry',
+        'fingerprint',
         'analyzed_at',
     ];
 

@@ -8,6 +8,7 @@ use App\Services\Audit\AuditSettings;
 use App\Services\Audit\ImageQualityAnalyzer;
 use App\Services\Audit\Issue;
 use App\Services\Audit\Rules\BodyImageRule;
+use App\Services\Audit\Rules\DuplicateImageRule;
 use App\Services\Audit\Rules\FeaturedImageRule;
 use App\Services\Audit\Rules\H1Rule;
 use App\Services\Audit\Rules\H2Rule;
@@ -254,6 +255,41 @@ class AuditRulesTest extends TestCase
         $this->assertSame(['long_title'], $this->types($issues));
     }
 
+    /* --- Images en double --------------------------------------------------- */
+
+    public function test_une_image_presente_deux_fois_est_signalee(): void
+    {
+        $issues = (new DuplicateImageRule)->evaluate($this->context([
+            'content' => '<img src="https://example.com/a.jpg"><p>…</p><img src="https://example.com/b.jpg">'
+                .'<img src="https://example.com/a.jpg" alt="copie">',
+        ]));
+
+        $this->assertSame(['duplicate_image'], $this->types($issues));
+        $this->assertSame('Image en double (2 fois dans le contenu)', $issues[0]->message);
+        $this->assertSame([1, 3], $issues[0]->metadata['positions']);
+    }
+
+    public function test_les_declinaisons_de_taille_d_une_meme_image_sont_des_doublons(): void
+    {
+        $issues = (new DuplicateImageRule)->evaluate($this->context([
+            'content' => '<img src="https://example.com/wp-content/uploads/bague-1024x768.jpg">'
+                .'<img src="https://example.com/wp-content/uploads/bague.jpg">'
+                .'<img src="https://example.com/wp-content/uploads/bague-scaled.jpg">',
+        ]));
+
+        $this->assertSame(['duplicate_image'], $this->types($issues));
+        $this->assertSame(3, $issues[0]->metadata['count']);
+    }
+
+    public function test_des_images_differentes_ne_sont_pas_des_doublons(): void
+    {
+        $issues = (new DuplicateImageRule)->evaluate($this->context([
+            'content' => '<img src="https://example.com/a.jpg"><img src="https://example.com/b.jpg">',
+        ]));
+
+        $this->assertSame([], $issues);
+    }
+
     /* --- Titres H1 / H2 ---------------------------------------------------- */
 
     public function test_deux_h1_sont_signales(): void
@@ -263,14 +299,25 @@ class AuditRulesTest extends TestCase
         ]));
 
         $this->assertSame(['multiple_h1'], $this->types($issues));
-        $this->assertSame('2 balises H1 détectées', $issues[0]->message);
+        $this->assertSame('Problème balise H1 : 3 H1 sur la page', $issues[0]->message);
         $this->assertSame(['Premier', 'Second'], $issues[0]->metadata['headings']);
     }
 
-    public function test_un_seul_h1_est_conforme(): void
+    public function test_un_h1_dans_le_contenu_est_signale_car_le_titre_est_deja_le_h1(): void
     {
         $issues = (new H1Rule)->evaluate($this->context([
             'content' => '<h1>Unique</h1><p>…</p>',
+        ]));
+
+        $this->assertSame(['multiple_h1'], $this->types($issues));
+        $this->assertSame('Problème balise H1 : 2 H1 sur la page', $issues[0]->message);
+        $this->assertSame(1, $issues[0]->metadata['count']);
+    }
+
+    public function test_un_contenu_sans_h1_est_conforme(): void
+    {
+        $issues = (new H1Rule)->evaluate($this->context([
+            'content' => '<h2>Intertitre</h2><p>…</p>',
         ]));
 
         $this->assertSame([], $issues);
@@ -291,7 +338,7 @@ class AuditRulesTest extends TestCase
         // Le titre de l'article contient le mot H1 mais n'est pas dans le contenu.
         $issues = (new H1Rule)->evaluate($this->context([
             'title' => 'Un titre qui serait rendu en H1 par le thème',
-            'content' => '<h1>Le seul H1 du contenu</h1>',
+            'content' => '<p>Aucun H1 dans le contenu.</p>',
         ]));
 
         $this->assertSame([], $issues);

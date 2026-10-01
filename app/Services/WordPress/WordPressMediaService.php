@@ -3,7 +3,11 @@
 namespace App\Services\WordPress;
 
 use App\Models\WordpressSite;
+use App\Support\UnsafeUrlException;
+use App\Support\UrlGuard;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
 /**
@@ -13,6 +17,7 @@ class WordPressMediaService
 {
     public function __construct(
         protected WordPressApiService $api,
+        protected UrlGuard $guard,
     ) {}
 
     /**
@@ -47,6 +52,77 @@ class WordPressMediaService
             $filename,
             $file->getMimeType() ?: 'application/octet-stream',
         );
+
+        return $this->present($media);
+    }
+
+    /**
+     * « Renomme » une image : WordPress ne sait pas renommer un fichier par
+     * son API, l'image est donc téléversée à nouveau sous le nouveau nom, avec
+     * ses textes (alt, légende, description). L'ancien fichier reste dans la
+     * médiathèque, intact : d'autres articles peuvent l'utiliser.
+     *
+     * Le fichier d'origine (pleine taille) est repris quand le média est
+     * connu, sinon l'URL de l'image telle qu'insérée dans l'article.
+     *
+     * @return array<string, mixed> le nouveau média
+     *
+     * @throws WordPressApiException
+     */
+    public function renameCopy(WordpressSite $site, string $src, ?int $mediaId, string $name): array
+    {
+        $original = $mediaId ? $this->api->fetchMedia($site, $mediaId) : null;
+        $sourceUrl = is_string($original['source_url'] ?? null) ? $original['source_url'] : $src;
+
+        $slug = Str::limit(Str::slug($name), 80, '');
+
+        if ($slug === '') {
+            throw new WordPressApiException('Nom de fichier invalide : utilisez des lettres, des chiffres et des tirets.', 'invalid_name', 422);
+        }
+
+        try {
+            $this->guard->assertSafe($sourceUrl);
+        } catch (UnsafeUrlException $e) {
+            throw new WordPressApiException('Adresse de l’image refusée.', 'unsafe_url', null, ['url' => $sourceUrl], $e);
+        }
+
+        try {
+            $response = Http::withHeaders(['User-Agent' => config('articleguard.http.user_agent')])
+                ->timeout((int) config('articleguard.images.download_timeout', 12) + 18)
+                ->connectTimeout((int) config('articleguard.http.connect_timeout', 8))
+                ->get($sourceUrl);
+        } catch (ConnectionException $e) {
+            throw WordPressApiException::unreachable($sourceUrl, $e);
+        }
+
+        $contents = $response->successful() ? $response->body() : '';
+        $info = $contents !== '' ? @getimagesizefromstring($contents) : false;
+
+        if ($info === false || strlen($contents) > (int) config('articleguard.images.max_bytes', 8 * 1024 * 1024)) {
+            throw new WordPressApiException('Impossible de récupérer l’image d’origine pour la renommer.', 'image_unavailable', null, ['url' => $sourceUrl]);
+        }
+
+        $extension = strtolower(pathinfo((string) parse_url($sourceUrl, PHP_URL_PATH), PATHINFO_EXTENSION))
+            ?: (image_type_to_extension($info[2], false) ?: 'jpg');
+
+        $media = $this->api->uploadMedia($site, $contents, $slug.'.'.$extension, (string) $info['mime']);
+
+        // Les textes du média d'origine suivent la copie ; le titre reprend le
+        // nouveau nom, comme le ferait WordPress pour un fichier téléversé.
+        $texts = array_filter([
+            'title' => trim($name),
+            'alt_text' => (string) ($original['alt_text'] ?? ''),
+            'caption' => $this->plain($original['caption'] ?? null),
+            'description' => $this->plain($original['description'] ?? null),
+        ], fn (string $value) => $value !== '');
+
+        if ($texts !== [] && isset($media['id'])) {
+            try {
+                $media = $this->api->updateMedia($site, (int) $media['id'], $texts);
+            } catch (WordPressApiException) {
+                // Le fichier est bien renommé : seuls les textes manquent.
+            }
+        }
 
         return $this->present($media);
     }

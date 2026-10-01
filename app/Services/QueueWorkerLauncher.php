@@ -105,6 +105,19 @@ class QueueWorkerLauncher
     }
 
     /**
+     * Lance une commande artisan détachée (même mécanisme que le worker) : la
+     * requête HTTP rend la main sans attendre sa fin.
+     *
+     * @param  list<string>  $arguments  ex. ['articleguard:save-article', '<jeton>']
+     *
+     * @throws \RuntimeException si le processus n'a pas pu être lancé
+     */
+    public function runInBackground(array $arguments): void
+    {
+        $this->spawn([$this->phpBinary(), base_path('artisan'), ...$arguments]);
+    }
+
+    /**
      * @return list<string>
      */
     protected function command(): array

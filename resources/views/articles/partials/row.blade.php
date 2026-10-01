@@ -6,7 +6,7 @@
         $article,
         isset($site) ? $site->url : ($article->relationLoaded('site') ? $article->site?->url : null)
     );
-    $imageIssues = $issues->whereIn('rule_type', ['featured_image_unreachable', 'body_image_broken', 'image_blurry', 'image_low_resolution', 'image_possibly_incoherent'])->count();
+    $imageIssues = $issues->whereIn('rule_type', ['featured_image_unreachable', 'body_image_broken', 'image_blurry', 'image_low_resolution', 'image_possibly_incoherent', 'duplicate_image', 'similar_image'])->count();
 @endphp
 
 <tr data-article-id="{{ $article->id }}">

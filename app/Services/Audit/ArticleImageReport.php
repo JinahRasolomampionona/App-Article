@@ -24,6 +24,8 @@ class ArticleImageReport
         'image_blurry',
         'image_low_resolution',
         'image_possibly_incoherent',
+        'duplicate_image',
+        'similar_image',
     ];
 
     /**
@@ -86,7 +88,12 @@ class ArticleImageReport
                 'height' => $analysis?->height,
                 'sharpness' => $analysis?->sharpness,
                 'bytes' => $analysis?->bytes,
-                'verdicts' => $this->verdicts($analysis, $related->pluck('rule_type')->all(), $settings),
+                'verdicts' => $this->verdicts(
+                    $analysis,
+                    $related->pluck('rule_type')->all(),
+                    $settings,
+                    $related->firstWhere('rule_type', 'image_possibly_incoherent')?->metadata['reason'] ?? null,
+                ),
             ];
         }, $candidates);
     }
@@ -95,7 +102,7 @@ class ArticleImageReport
      * @param  array<int, string>  $issueTypes
      * @return array<int, array{label: string, variant: string, icon: string, detail: ?string}>
      */
-    protected function verdicts(?ImageAnalysis $analysis, array $issueTypes, AuditSettings $settings): array
+    protected function verdicts(?ImageAnalysis $analysis, array $issueTypes, AuditSettings $settings, ?string $incoherenceReason = null): array
     {
         $verdicts = [];
 
@@ -104,8 +111,12 @@ class ArticleImageReport
             return [['label' => 'Image cassée / inaccessible', 'variant' => 'danger', 'icon' => 'bi-x-octagon', 'detail' => $analysis?->error_code]];
         }
 
+        if (array_intersect(['duplicate_image', 'similar_image'], $issueTypes)) {
+            $verdicts[] = ['label' => 'En double', 'variant' => 'warning', 'icon' => 'bi-files', 'detail' => 'Même image plusieurs fois dans le contenu'];
+        }
+
         if (in_array('image_possibly_incoherent', $issueTypes, true)) {
-            $verdicts[] = ['label' => 'Potentiellement incohérente', 'variant' => 'warning', 'icon' => 'bi-question-diamond', 'detail' => 'avec le sujet de l’article'];
+            $verdicts[] = ['label' => 'Potentiellement incohérente', 'variant' => 'warning', 'icon' => 'bi-question-diamond', 'detail' => filled($incoherenceReason) ? $incoherenceReason : 'avec le sujet de l’article'];
         }
 
         if ($analysis === null || $analysis->status !== ImageAnalysis::STATUS_OK) {

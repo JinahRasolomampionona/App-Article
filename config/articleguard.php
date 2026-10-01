@@ -72,6 +72,8 @@ return [
         'featured_image' => (bool) env('AG_RULE_FEATURED_IMAGE', true),
         'body_image' => (bool) env('AG_RULE_BODY_IMAGE', false),
         'broken_image' => (bool) env('AG_RULE_BROKEN_IMAGE', true),
+        'duplicate_image' => (bool) env('AG_RULE_DUPLICATE_IMAGE', true),
+        'similar_image' => (bool) env('AG_RULE_SIMILAR_IMAGE', true),
         'shortcode' => (bool) env('AG_RULE_SHORTCODE', true),
         'long_title' => (bool) env('AG_RULE_LONG_TITLE', true),
         'h1' => (bool) env('AG_RULE_H1', true),
@@ -116,6 +118,11 @@ return [
         // L'image à la une est affichée en bandeau (hero) par le thème : elle
         // est exclue des analyses de flou et de cohérence, sauf si activé ici.
         'analyze_featured_image' => (bool) env('AG_ANALYZE_FEATURED_IMAGE', false),
+        // Le thème affiche l'image à la une en tête d'article : la même photo
+        // reprise dans le contenu est donc vue deux fois (règle similar_image).
+        'featured_shown_by_theme' => (bool) env('AG_FEATURED_SHOWN_BY_THEME', true),
+        // Nombre maximum d'images comparées entre elles par article.
+        'max_compared_images' => 12,
     ],
 
     /*
@@ -132,9 +139,16 @@ return [
 
     'relevance' => [
         'driver' => env('AG_RELEVANCE_DRIVER', 'heuristic'),
+        // `vision` : Claude regarde l'image et applique les trois critères
+        // (titre, contexte de l'article, précision). Sans clé, repli sur
+        // l'heuristique.
         'vision' => [
-            'api_key' => env('AG_VISION_API_KEY'),
-            'model' => env('AG_VISION_MODEL'),
+            'api_key' => env('AG_VISION_API_KEY') ?: env('ANTHROPIC_API_KEY'),
+            'model' => env('AG_VISION_MODEL') ?: 'claude-opus-5-5',
+            // Simple classification par image : `low` suffit et garde les
+            // audits rapides. `medium` ou `high` pour un jugement plus fin.
+            'effort' => env('AG_VISION_EFFORT', 'low'),
+            'timeout' => (int) env('AG_VISION_TIMEOUT', 60),
             'endpoint' => env('AG_VISION_ENDPOINT'),
         ],
     ],
@@ -171,6 +185,21 @@ return [
         'heartbeat_seconds' => (int) env('AG_LOCK_HEARTBEAT_SECONDS', 60),
         // Rafraîchissement des assignations sur la page Articles, en secondes.
         'poll_seconds' => min(60, max(5, (int) env('AG_LOCK_POLL_SECONDS', 8))),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Enregistrement des articles
+    |--------------------------------------------------------------------------
+    |
+    | `background` : « Mettre à jour » envoie l'article à WordPress dans un
+    | processus détaché ; l'éditeur rend la main aussitôt et suit l'avancement.
+    | false : l'éditeur attend la réponse de WordPress (comportement direct).
+    |
+    */
+
+    'saves' => [
+        'background' => (bool) env('AG_BACKGROUND_SAVES', true),
     ],
 
     'seed_names' => array_values(array_filter(array_map(

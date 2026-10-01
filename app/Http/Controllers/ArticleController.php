@@ -14,10 +14,10 @@ use App\Services\Audit\AuditService;
 use App\Services\Audit\AuditSettings;
 use App\Services\QueueWorkerLauncher;
 use App\Services\SiteContext;
+use App\Services\WordPress\ArticleSaveService;
 use App\Services\WordPress\WordPressApiException;
 use App\Services\WordPress\WordPressArticleService;
 use App\Services\WordPress\WordPressSyncService;
-use App\Services\WordPress\WriteInProgress;
 use App\Support\AgentCatalog;
 use App\Support\HtmlContent;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -137,17 +137,31 @@ class ArticleController extends Controller
     /**
      * Enregistre les modifications vers WordPress, puis relance l'audit.
      */
-    public function update(UpdateArticleRequest $request, WordpressArticle $article): JsonResponse
+    public function update(UpdateArticleRequest $request, WordpressArticle $article, ArticleSaveService $saves): JsonResponse
     {
+        // WordPress peut mettre plusieurs dizaines de secondes à enregistrer :
+        // l'envoi part en arrière-plan et l'éditeur rend la main tout de suite.
+        // Rien à envoyer : réponse immédiate, inutile de lancer un processus.
+        if ($saves->supportsBackground() && $this->articles->buildPayload($article, $request->validated()) !== []) {
+            $token = $saves->queue($article, $request->user(), $request->validated());
+
+            if ($token !== null) {
+                return response()->json([
+                    'ok' => true,
+                    'pending' => true,
+                    'message' => 'Envoi à WordPress en arrière-plan…',
+                    'status_url' => route('articles.save-status', [$article, $token]),
+                ], 202);
+            }
+        }
+
         // Écriture (jusqu'à `write_timeout`) puis relecture de vérification :
         // la limite PHP par défaut couperait la requête avant la fin et le
         // navigateur ne recevrait qu'une page d'erreur.
         @set_time_limit((int) config('articleguard.http.write_timeout', 90) + 90);
 
         try {
-            $result = app(WriteInProgress::class)->during(
-                fn () => $this->articles->update($article, $request->validated())
-            );
+            $result = $saves->save($article, $request->validated());
         } catch (WordPressApiException $e) {
             return response()->json([
                 'ok' => false,
@@ -155,30 +169,83 @@ class ArticleController extends Controller
             ], $e->status && $e->status < 500 ? $e->status : 502);
         }
 
-        $article = $result['article']->refresh();
-
-        // Audit immédiat sur les règles locales pour un retour instantané ;
-        // les règles réseau (images) sont relancées en file d'attente.
-        $this->audit->run(
-            $article,
-            AuditSettings::forUser($article->site?->user),
-            allowNetwork: false,
-            trigger: 'save',
-        );
-
-        AuditArticleJob::dispatch($article, 'save');
-        $this->worker->ensureRunning();
-
-        $article->refresh()->load('categories');
+        $article = $result['article']->load('categories');
 
         return response()->json([
             'ok' => true,
-            'message' => $result['changed'] === []
-                ? 'Aucune modification à envoyer : l’article était déjà à jour.'
-                : 'Article mis à jour sur WordPress.',
+            'message' => ArticleSaveService::message($result),
             'changed' => $result['changed'],
             'audit' => $this->auditPayload($article),
         ]);
+    }
+
+    /**
+     * « Vider le cache » de l'éditeur : la page publique de l'article est
+     * régénérée au prochain passage d'un visiteur.
+     */
+    public function purgeCache(WordpressArticle $article, ArticleSaveService $saves): JsonResponse
+    {
+        $this->authorize('audit', $article);
+
+        if (! $article->site?->hasCredentials()) {
+            return response()->json(['ok' => false, 'message' => 'Aucun identifiant WordPress enregistré pour ce site.'], 422);
+        }
+
+        $purged = $saves->purgeCache($article);
+
+        if ($purged === null) {
+            return response()->json([
+                'ok' => false,
+                'message' => 'Cache non vidé : installez l’extension « ArticleGuard Cache Bridge » sur le site (page Sites WordPress), ou videz le cache depuis WordPress.',
+            ], 422);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'message' => 'Cache de l’article vidé ('.implode(', ', $purged).').',
+            'caches' => $purged,
+        ]);
+    }
+
+    /**
+     * Suivi d'un enregistrement en arrière-plan, interrogé par l'éditeur.
+     *
+     * Seul l'auteur de l'enregistrement peut le suivre. Si le processus
+     * détaché n'a jamais démarré, l'enregistrement est exécuté ici même : il
+     * n'est jamais perdu.
+     */
+    public function saveStatus(Request $request, WordpressArticle $article, string $token, ArticleSaveService $saves): JsonResponse
+    {
+        $this->authorize('view', $article);
+
+        $entry = $saves->status($token);
+
+        if ($entry === null || $entry['article_id'] !== $article->id || $entry['user_id'] !== $request->user()->id) {
+            return response()->json(['ok' => false, 'message' => 'Enregistrement introuvable ou expiré.'], 404);
+        }
+
+        if ($saves->neverStarted($entry)) {
+            @set_time_limit((int) config('articleguard.http.write_timeout', 90) + 90);
+
+            $saves->process($token);
+            $entry = $saves->status($token) ?? $entry;
+        }
+
+        return match ($entry['status']) {
+            ArticleSaveService::STATUS_DONE => response()->json([
+                'ok' => true,
+                'status' => 'done',
+                'message' => $entry['message'],
+                'changed' => $entry['changed'] ?? [],
+                'audit' => $this->auditPayload($article->refresh()->load('categories')),
+            ]),
+            ArticleSaveService::STATUS_FAILED => response()->json([
+                'ok' => false,
+                'status' => 'failed',
+                'message' => $entry['message'],
+            ], (int) ($entry['code'] ?? 502)),
+            default => response()->json(['ok' => true, 'status' => 'pending']),
+        };
     }
 
     /**
@@ -188,11 +255,18 @@ class ArticleController extends Controller
     {
         $this->authorize('audit', $article);
 
+        @set_time_limit(180);
+
+        // Version actuelle de WordPress (une correction faite directement dans
+        // l'administration WordPress compte aussi), images re-téléchargées.
+        $this->sync->refreshQuietly($article);
+
         $this->audit->run(
-            $article,
+            $article->refresh(),
             AuditSettings::forUser($article->site?->user),
             allowNetwork: true,
             trigger: 'manual',
+            freshImages: true,
         );
 
         $article->refresh();

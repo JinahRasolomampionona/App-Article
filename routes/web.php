@@ -57,6 +57,7 @@ Route::middleware(['auth', 'active'])->group(function () {
     /* --- Médiathèque --- */
     Route::get('/sites/{site}/media', [MediaController::class, 'index'])->name('sites.media.index');
     Route::post('/sites/{site}/media', [MediaController::class, 'store'])->name('sites.media.store');
+    Route::post('/sites/{site}/media/rename', [MediaController::class, 'rename'])->name('sites.media.rename');
     Route::get('/sites/{site}/media/{media}', [MediaController::class, 'show'])
         ->whereNumber('media')->name('sites.media.show');
     Route::put('/sites/{site}/media/{media}', [MediaController::class, 'update'])
@@ -69,6 +70,10 @@ Route::middleware(['auth', 'active'])->group(function () {
     Route::get('/articles/{article}', [ArticleController::class, 'show'])->name('articles.show');
     Route::get('/articles/{article}/edit', [ArticleController::class, 'edit'])->name('articles.edit');
     Route::put('/articles/{article}', [ArticleController::class, 'update'])->name('articles.update');
+    Route::post('/articles/{article}/purge-cache', [ArticleController::class, 'purgeCache'])->name('articles.purge-cache');
+    Route::get('/articles/{article}/save-status/{token}', [ArticleController::class, 'saveStatus'])
+        ->where('token', '[A-Za-z0-9]{40}')
+        ->name('articles.save-status');
     Route::post('/articles/{article}/audit', [ArticleController::class, 'auditArticle'])->name('articles.audit');
     Route::post('/articles/{article}/status', [ArticleController::class, 'updateStatus'])->name('articles.status');
     Route::post('/articles/{article}/refresh', [ArticleController::class, 'refresh'])->name('articles.refresh');
@@ -103,6 +108,7 @@ Route::middleware(['auth', 'active'])->group(function () {
         Route::post('/articles/{article}/reassign', [ArticleReviewController::class, 'reassign'])->name('articles.reassign');
         Route::post('/articles/{article}/notes', [ArticleReviewController::class, 'storeNote'])->name('articles.notes');
 
+        Route::get('/sites/cache-bridge.zip', [SiteController::class, 'cacheBridge'])->name('sites.cache-bridge');
         Route::get('/sites/create', [SiteController::class, 'create'])->name('sites.create');
         Route::post('/sites', [SiteController::class, 'store'])->name('sites.store');
         Route::get('/sites/{site}/edit', [SiteController::class, 'edit'])->name('sites.edit');

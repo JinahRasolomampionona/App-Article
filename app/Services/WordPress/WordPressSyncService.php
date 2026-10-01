@@ -179,6 +179,26 @@ class WordPressSyncService
     }
 
     /**
+     * Comme `syncArticle()`, sans jamais échouer : si WordPress est
+     * injoignable, l'audit se fait sur la copie locale plutôt que pas du tout.
+     */
+    public function refreshQuietly(WordpressArticle $article): bool
+    {
+        try {
+            $this->syncArticle($article);
+
+            return true;
+        } catch (WordPressApiException $e) {
+            Log::info('Article non relu depuis WordPress avant audit', [
+                'article_id' => $article->id,
+                'reason' => $e->reason,
+            ]);
+
+            return false;
+        }
+    }
+
+    /**
      * @param  array<int, int>  $wpCategoryIds
      * @param  array<int, int>  $categoryMap  wp_id => id local
      */

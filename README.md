@@ -128,6 +128,8 @@ AG_SSRF_ALLOWLIST=localhost
 AG_RULE_FEATURED_IMAGE=true
 AG_RULE_BODY_IMAGE=false   # un article sans image n'est pas un défaut en soi
 AG_RULE_BROKEN_IMAGE=true   # images du contenu qui ne s'affichent pas
+AG_RULE_DUPLICATE_IMAGE=true # même image plusieurs fois dans le contenu
+AG_RULE_SIMILAR_IMAGE=true   # même photo sous deux fichiers (comparaison visuelle)
 AG_RULE_SHORTCODE=true
 AG_RULE_LONG_TITLE=true
 AG_RULE_H1=true
@@ -149,19 +151,33 @@ surcharger depuis la page **Paramètres** de l'application.
 ### Fournisseur d'analyse de pertinence (optionnel)
 
 ```dotenv
-AG_RELEVANCE_DRIVER=heuristic   # heuristic | null | (votre pilote)
-AG_VISION_API_KEY=
-AG_VISION_MODEL=
+AG_RELEVANCE_DRIVER=heuristic   # heuristic | vision | null
+AG_VISION_API_KEY=              # clé API Anthropic (ou ANTHROPIC_API_KEY)
+AG_VISION_MODEL=                # défaut : claude-opus-5-5
+AG_VISION_EFFORT=low            # low | medium | high
+AG_VISION_TIMEOUT=60
 AG_VISION_ENDPOINT=
 ```
 
+- `vision` — **Claude regarde l'image** et la juge sur trois critères :
+  1. *cohérence avec le titre* (l'image montre le sujet annoncé) ;
+  2. *cohérence avec le contexte* (événements, personnes, lieux, objets
+     réellement décrits dans l'article — une image fidèle au titre peut être
+     incohérente avec le contenu) ;
+  3. *précision* (ni générique, ni ambiguë, ni trompeuse).
+  Un seul critère en échec suffit à produire la remarque « Image
+  potentiellement incohérente » ; le détail des trois critères s'affiche dans
+  la colonne d'audit de l'éditeur. Les verdicts sont mis en cache par image et
+  par titre (`AG_IMAGE_ANALYSIS_TTL_DAYS`) : un audit relancé ne refait pas
+  l'appel. Sans clé, repli automatique sur `heuristic`.
 - `heuristic` — analyse **locale**, sans appel externe : compare le vocabulaire
-  décrivant l'image (nom de fichier, `alt`, légende) à celui de l'article.
+  décrivant l'image (nom de fichier, `alt`, légende) au titre et au contenu de
+  l'article. Elle ne voit pas l'image : elle n'approche les trois critères que
+  par le texte.
 - `null` — analyse désactivée, aucune remarque n'est produite.
 
-Pour brancher un fournisseur de vision distant, implémenter
-`ImageRelevanceAnalyzerInterface` et l'enregistrer dans
-`AppServiceProvider::register()` — le moteur d'audit n'a pas à être modifié.
+Après avoir activé `vision`, relancez un audit complet (bouton « Auditer » ou
+`php artisan wp:sync --all`) pour réévaluer les images existantes.
 
 ---
 
@@ -292,6 +308,11 @@ Toutes ces règles sont contrôlées côté Laravel (policies, porte `admin`,
   considéré comme libre partout, sans attendre de tâche planifiée.
 - La page Articles rafraîchit l'état des lignes affichées toutes les
   `AG_LOCK_POLL_SECONDS` secondes (seules les cellules Agent/Actions changent).
+- **Mettre à jour** part en arrière-plan (`AG_BACKGROUND_SAVES=true`) : un
+  processus `php artisan articleguard:save-article` détaché envoie l'article à
+  WordPress, l'éditeur rend la main aussitôt et suit l'avancement. Les
+  enregistrements d'un même article sont sérialisés. Si le processus ne
+  démarre pas, le suivi exécute lui-même l'enregistrement au bout de 15 s.
 - **Terminer la correction** : enregistre les modifications sur WordPress,
   relance un audit complet, enregistre l'activité, crédite l'agent dans les
   statistiques et libère l'article. Le statut « Corrigé » découle de l'audit,
@@ -474,9 +495,37 @@ par un plugin de sécurité : le site cesse alors de les annoncer dans la clé
 | `GET /wp/v2/posts`         | articles (paginés, `context=edit` si auth)  |
 | `POST /wp/v2/posts/{id}`   | mise à jour d'un article                    |
 | `GET|POST /wp/v2/media`    | médiathèque et upload                       |
+| `POST /articleguard/v1/purge/{id}` | vidage du cache de l'article (extension ci-dessous) |
 
 La pagination suit les en-têtes `X-WP-Total` et `X-WP-TotalPages` : aucune
 requête ne suppose que tout tient en une page.
+
+### Vider le cache après correction (extension « ArticleGuard Cache Bridge »)
+
+Un site équipé d'un cache de page (WP Rocket, LiteSpeed Cache, W3 Total Cache,
+WP Super Cache, WP Fastest Cache, SiteGround Optimizer, Breeze) peut continuer
+à servir l'ancienne version d'un article corrigé. WordPress n'offre aucune API
+standard pour vider ces caches : l'extension
+`resources/wordpress/articleguard-cache-bridge` ajoute la route
+`POST /wp-json/articleguard/v1/purge/{id}`, réservée aux comptes autorisés à
+modifier l'article.
+
+- Téléchargement : page **Sites WordPress › Télécharger l'extension** (Admin),
+  puis WordPress › Extensions › Ajouter › Téléverser une extension › Activer.
+- Chaque « Mettre à jour » vide alors le cache de l'article ; le message de
+  confirmation indique les caches vidés.
+- Bouton **Vider le cache de l'article** dans l'éditeur, pour une correction
+  faite directement dans WordPress.
+- Sans l'extension, l'enregistrement fonctionne normalement, simplement sans
+  vidage du cache.
+- Cache maison (Varnish, Nginx, CDN) : se brancher sur l'action
+  `articleguard_purge_post` (`$post_id`, `$url`).
+
+Côté ArticleGuard, « Auditer » et « Terminer la correction » relisent
+l'article depuis WordPress puis **re-téléchargent ses images** (les analyses
+mémorisées sont ignorées), tout comme l'audit qui suit un « Mettre à jour » :
+une image corrigée sur le site sous la même URL n'est plus jugée sur un ancien
+résultat.
 
 ---
 
@@ -486,10 +535,12 @@ requête ne suppose que tout tient en une page.
 |----------------------|-----------------------------------------|----------|--------|---------|
 | `featured_image`     | Image à la une manquante / inaccessible | warning  | non    | activée |
 | `broken_image`       | Image cassée dans le contenu            | error    | oui    | activée |
+| `duplicate_image`    | Image en double (N fois dans le contenu) | warning | non    | activée |
+| `similar_image`      | Image en double (même photo, autre fichier ; image à la une reprise dans le contenu) | warning | oui | activée |
 | `body_image`         | Image dans le contenu manquante         | warning  | non    | **désactivée** |
 | `long_title`         | H1 trop long (max : 20 mots)            | warning  | non    | activée |
 | `shortcode`          | Shortcode détecté / Crochet détecté     | info     | non    | activée |
-| `h1`                 | *N* balises H1 détectées / H1 manquant  | error    | non    | activée |
+| `h1`                 | Problème balise H1 / H1 manquant        | error    | non    | activée |
 | `missing_h2`         | H2 manquant                             | info     | non    | désactivée |
 | `image_blur`         | Image potentiellement floue             | warning  | oui    | activée |
 | `image_relevance`    | Image potentiellement incohérente       | info     | oui    | activée |
@@ -513,8 +564,30 @@ Deux contrôles distincts portent sur les H1, à ne pas confondre :
   que trois, interminables. Les séparateurs isolés (« : », « — ») ne comptent
   pas pour des mots.
 - **`h1`** compte les balises `<h1>` **présentes dans le contenu**. Le titre
-  WordPress n'y est pas compté : il est rendu séparément par le thème. Plusieurs
-  H1 dans le corps de l'article restent donc une anomalie.
+  WordPress est déjà le H1 de la page (rendu par le thème) : **tout H1 dans le
+  corps de l'article** en ajoute un second et produit la remarque
+  « Problème balise H1 : *N* H1 sur la page ». La correction consiste à passer
+  ces H1 en H2.
+
+### Images en double
+
+Deux règles complémentaires produisent la remarque « Image en double » :
+
+- **`duplicate_image`** (locale, instantanée) : le même fichier inséré
+  plusieurs fois dans le contenu. Les déclinaisons de taille WordPress
+  (`photo-1024x768.jpg`, `photo-scaled.jpg`) comptent comme le même fichier.
+  L'éditeur marque aussi les copies « En double » en direct dans la liste
+  « Images du contenu ».
+- **`similar_image`** (réseau) : la même photo sous deux fichiers différents —
+  typiquement téléversée deux fois (`bague.jpg` et `bague-1.jpg`) — ou l'image
+  à la une reprise dans le contenu, alors que le thème l'affiche déjà en tête
+  d'article (`AG_FEATURED_SHOWN_BY_THEME=true`). La comparaison porte sur les
+  images elles-mêmes : une empreinte visuelle (dHash 64 bits) est calculée lors
+  du téléchargement et stockée dans `image_analyses.fingerprint`. Un nom en
+  `-1` ne suffit pas : deux photos différentes ne sont jamais signalées.
+
+Les analyses antérieures à l'empreinte sont complétées automatiquement au
+prochain audit de l'article (une seule fois).
 
 ### Images cassées
 

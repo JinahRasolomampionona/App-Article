@@ -2126,6 +2126,80 @@ html.ag-nav-collapsed .ag-sidebar {
     }
 }
 
+// --- Glisser-déposer ---------------------------------------------------------
+
+// Zone qui accepte une image déposée : bordure pointillée au survol d'un
+// fichier, voile discret pendant le téléversement.
+.ag-dropzone {
+    position: relative;
+    border-radius: 10px;
+    transition: box-shadow var(--ag-transition), background-color var(--ag-transition);
+
+    &--large {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 260px;
+        padding: 2rem 1rem;
+        text-align: center;
+        border: 2px dashed var(--ag-border);
+        background: #fbfbfd;
+    }
+
+    &__icon {
+        font-size: 2.25rem;
+        color: var(--ag-primary);
+        margin-bottom: 0.5rem;
+    }
+
+    &__title {
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+    }
+
+    &.is-dragover {
+        background: var(--ag-primary-soft);
+        box-shadow: 0 0 0 2px var(--ag-primary);
+    }
+
+    &--large.is-dragover {
+        border-color: var(--ag-primary);
+        box-shadow: none;
+    }
+
+    // Libellé affiché par-dessus l'aperçu de l'image à la une.
+    &[data-drop-label].is-dragover::after {
+        content: attr(data-drop-label);
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        border-radius: inherit;
+        text-align: center;
+        font-weight: 600;
+        font-size: 0.8125rem;
+        color: var(--ag-primary-dark);
+        background: rgba(255, 255, 255, 0.85);
+    }
+
+    &.is-busy {
+        pointer-events: none;
+        opacity: 0.6;
+    }
+}
+
+.ag-media-tabs .nav-link {
+    font-size: 0.875rem;
+    color: var(--ag-muted);
+
+    &.active {
+        color: var(--ag-primary);
+    }
+}
+
 .ag-thumb {
     width: 100%;
     aspect-ratio: 16 / 9;
@@ -2145,9 +2219,22 @@ html.ag-nav-collapsed .ag-sidebar {
     padding: 0.625rem;
     border: 1px solid var(--ag-border);
     border-radius: 9px;
+    transition: border-color var(--ag-transition), background-color var(--ag-transition);
 
     & + & {
         margin-top: 0.5rem;
+    }
+
+    // Une image glissée sur la ligne la remplacera.
+    &.is-dragover {
+        border-style: dashed;
+        border-color: var(--ag-primary);
+        background: var(--ag-primary-soft);
+    }
+
+    &.is-busy {
+        pointer-events: none;
+        opacity: 0.6;
     }
 
     &__head {
@@ -2245,7 +2332,8 @@ html.ag-nav-collapsed .ag-sidebar {
             min-width: 0;
         }
 
-        .btn-outline-danger {
+        .btn-outline-danger,
+        .ag-image-row__icon {
             flex: 0 0 auto;
         }
     }

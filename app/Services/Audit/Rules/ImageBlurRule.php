@@ -54,9 +54,7 @@ class ImageBlurRule implements AuditRule
         $blurThreshold = (float) $context->settings->threshold('blur', 100);
 
         foreach ($this->analyzableImages($context) as $target) {
-            $analysis = $context->allowNetwork
-                ? $this->analyzer->analyze($target['src'])
-                : $this->analyzer->cached($target['src']);
+            $analysis = $context->imageAnalysis($this->analyzer, $target['src']);
 
             if ($analysis === null || $analysis->status !== ImageAnalysis::STATUS_OK) {
                 continue;

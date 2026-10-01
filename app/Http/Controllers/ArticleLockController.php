@@ -9,6 +9,7 @@ use App\Services\Assignment\ArticleLockService;
 use App\Services\Audit\AuditService;
 use App\Services\Audit\AuditSettings;
 use App\Services\QueueWorkerLauncher;
+use App\Services\WordPress\WordPressSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -119,6 +120,15 @@ class ArticleLockController extends Controller
         } catch (ArticleLockedException $e) {
             $fresh = $article->fresh('assignee');
 
+            // Jamais « traité par Jinah » adressé à Jinah elle-même : si le
+            // verrou est toujours à elle, le battement a simplement réussi.
+            if ($fresh?->isLockedBy($request->user())) {
+                return response()->json([
+                    'ok' => true,
+                    'expires_at' => $fresh->lock_expires_at?->toIso8601String(),
+                ]);
+            }
+
             return response()->json([
                 'ok' => false,
                 'lost' => true,
@@ -143,17 +153,23 @@ class ArticleLockController extends Controller
      * jour » (l'éditeur enregistre d'abord ce qui ne l'est pas). Le statut
      * « Corrigé » n'est jamais déclaré : il découle de ce nouvel audit.
      */
-    public function finish(Request $request, WordpressArticle $article, AuditService $audit, QueueWorkerLauncher $worker): JsonResponse
+    public function finish(Request $request, WordpressArticle $article, AuditService $audit, QueueWorkerLauncher $worker, WordPressSyncService $sync): JsonResponse
     {
         $this->authorize('update', $article);
 
         @set_time_limit(180);
 
+        // L'audit de fin porte sur l'article tel qu'il est réellement sur
+        // WordPress (corrections faites dans l'administration WordPress
+        // comprises), images re-téléchargées : jamais sur un résultat en cache.
+        $sync->refreshQuietly($article);
+
         $audit->run(
-            $article,
+            $article->refresh(),
             AuditSettings::forUser($article->site?->user),
             allowNetwork: true,
             trigger: 'finish',
+            freshImages: true,
         );
 
         $article->refresh();

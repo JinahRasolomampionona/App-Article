@@ -25,7 +25,9 @@ export function createImageDetails({ mediaUrl } = {}) {
     const field = (name) => element.querySelector(`[data-details-${name}]`);
 
     const preview = field('preview');
-    const filename = field('filename');
+    const nameInput = field('name');
+    const extension = field('extension');
+    let originalName = '';
     const alt = field('alt');
     const link = field('link');
     const linkOpen = field('link-open');
@@ -192,9 +194,18 @@ export function createImageDetails({ mediaUrl } = {}) {
         }
 
         const option = sizeSelect.selectedOptions[0];
+        const newName = nameInput.value.trim();
+
+        if (newName === '') {
+            notify.error('Le nom du fichier ne peut pas être vide.');
+            nameInput.focus();
+            return;
+        }
 
         resolve({
             action: 'apply',
+            // Nouveau nom de fichier, seulement s'il a changé.
+            rename: newName !== originalName ? newName : null,
             alt: alt.value,
             link: url,
             caption: caption.value.trim(),
@@ -227,7 +238,16 @@ export function createImageDetails({ mediaUrl } = {}) {
 
             preview.src = settings.src ?? '';
             preview.alt = settings.alt ?? '';
-            filename.textContent = settings.filename ?? '';
+
+            // « photo-1024x768.jpg » : nom modifiable « photo » (la taille est
+            // une déclinaison WordPress, pas le nom), extension affichée à part.
+            const file = settings.filename ?? '';
+            const dot = file.lastIndexOf('.');
+            originalName = (dot > 0 ? file.slice(0, dot) : file).replace(/(-\d{2,5}x\d{2,5}|-scaled)+$/i, '');
+            nameInput.value = originalName;
+            nameInput.title = file;
+            extension.textContent = dot > 0 ? file.slice(dot) : '';
+            extension.hidden = dot <= 0;
 
             alt.value = settings.alt ?? '';
             link.value = settings.link ?? '';

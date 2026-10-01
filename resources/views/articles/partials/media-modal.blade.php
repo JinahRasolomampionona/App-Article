@@ -17,18 +17,50 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fermer"></button>
             </div>
 
-            <div class="modal-body">
-                <div class="ag-media-layout">
+            <div class="modal-body" data-media-body>
+                {{-- Deux onglets, comme WordPress : déposer/téléverser un fichier,
+                     ou choisir dans la médiathèque existante. --}}
+                @if($site->hasCredentials())
+                    <ul class="nav nav-underline ag-media-tabs mb-3" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button type="button" class="nav-link" role="tab" data-media-tab="upload"
+                                    aria-controls="ag-media-pane-upload" aria-selected="false">
+                                <i class="bi bi-cloud-arrow-up me-1" aria-hidden="true"></i> Téléverser des fichiers
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button type="button" class="nav-link active" role="tab" data-media-tab="library"
+                                    aria-controls="ag-media-pane-library" aria-selected="true">
+                                <i class="bi bi-images me-1" aria-hidden="true"></i> Médiathèque
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div id="ag-media-pane-upload" role="tabpanel" data-media-pane="upload" hidden>
+                        <div class="ag-dropzone ag-dropzone--large" data-media-dropzone>
+                            <i class="bi bi-cloud-arrow-up ag-dropzone__icon" aria-hidden="true"></i>
+                            <p class="ag-dropzone__title" data-media-dropzone-title>Déposez une image pour la téléverser</p>
+                            <p class="ag-hint mb-2">ou</p>
+                            <button type="button" class="btn btn-sm btn-outline-primary" data-media-upload-trigger>
+                                Sélectionner un fichier
+                            </button>
+                            <p class="ag-hint mt-3 mb-0">JPG, PNG, GIF ou WebP · 10 Mo maximum. L’image est ajoutée à la médiathèque WordPress.</p>
+                        </div>
+                    </div>
+                @endif
+
+                <div class="ag-media-layout" id="ag-media-pane-library" role="tabpanel" data-media-pane="library">
                     <div class="ag-media-layout__browse">
                         <div class="d-flex flex-wrap gap-2 mb-3">
                             <input type="search" class="form-control flex-grow-1" data-media-search
                                    placeholder="Rechercher une image…" aria-label="Rechercher dans la médiathèque"
                                    style="max-width: 22rem;">
 
-                            <button type="button" class="btn btn-outline-secondary" data-media-upload-trigger>
-                                <i class="bi bi-upload me-1" aria-hidden="true"></i> Téléverser
-                            </button>
-                            <input type="file" class="d-none" data-media-upload accept="image/*">
+                            @if($site->hasCredentials())
+                                <button type="button" class="btn btn-outline-secondary" data-media-upload-trigger>
+                                    <i class="bi bi-upload me-1" aria-hidden="true"></i> Téléverser
+                                </button>
+                            @endif
                         </div>
 
                         <div class="ag-media-grid" data-media-grid></div>

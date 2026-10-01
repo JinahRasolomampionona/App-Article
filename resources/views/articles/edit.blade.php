@@ -214,6 +214,16 @@
                             Consultation seule : prenez l’article pour le modifier.
                         </p>
                     @endif
+
+                    {{-- Le cache est vidé automatiquement à chaque mise à jour ;
+                         ce bouton sert après une correction faite ailleurs. --}}
+                    @if($site->hasCredentials())
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-keep-enabled
+                                data-purge-cache="{{ route('articles.purge-cache', $article) }}"
+                                title="Vider le cache de page de cet article sur WordPress (WP Rocket, LiteSpeed…)">
+                            <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i> Vider le cache de l’article
+                        </button>
+                    @endif
                 </div>
             </div>
 
@@ -225,15 +235,23 @@
                 <div class="ag-card__body">
                     <input type="hidden" name="featured_media_id" value="{{ $article->featured_media_id }}">
 
-                    <img class="ag-thumb mb-2" data-featured-preview
-                         src="{{ $article->featured_media_url }}"
-                         alt="{{ $article->featured_media_alt }}"
-                         @if(! $article->featured_media_url) hidden @endif>
+                    {{-- Zone de dépôt : glisser une image ici la téléverse dans la
+                         médiathèque WordPress et la définit comme image à la une. --}}
+                    <div class="ag-dropzone mb-2" data-featured-dropzone
+                         data-drop-label="Déposez l’image pour la mettre à la une">
+                        <img class="ag-thumb" data-featured-preview
+                             src="{{ $article->featured_media_url }}"
+                             alt="{{ $article->featured_media_alt }}"
+                             @if(! $article->featured_media_url) hidden @endif>
 
-                    <div class="ag-empty py-4 mb-2" data-featured-empty
-                         @if($article->featured_media_url) hidden @endif>
-                        <div class="ag-empty__icon"><i class="bi bi-image" aria-hidden="true"></i></div>
-                        <p class="ag-hint mb-0">Aucune image à la une</p>
+                        <div class="ag-empty py-4" data-featured-empty
+                             @if($article->featured_media_url) hidden @endif>
+                            <div class="ag-empty__icon"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i></div>
+                            <p class="ag-hint mb-0">Aucune image à la une</p>
+                            @if($site->hasCredentials())
+                                <p class="ag-hint mb-0">Glissez-déposez une image ici</p>
+                            @endif
+                        </div>
                     </div>
 
                     {{-- Champs du fichier joint WordPress : ils décrivent le média
@@ -247,9 +265,12 @@
                         </dd>
                     </dl>
 
-                    <div class="d-flex gap-2">
+                    {{-- « Remplacer » ouvre la médiathèque : choisir une image
+                         existante, ou en téléverser / déposer une nouvelle. --}}
+                    <div class="d-flex flex-wrap gap-2">
                         <button type="button" class="btn btn-sm btn-outline-primary flex-grow-1"
-                                data-featured-replace>
+                                data-featured-replace
+                                title="Choisir une image de la médiathèque, ou en téléverser une nouvelle">
                             {{ $article->featured_media_url ? 'Remplacer' : 'Choisir une image' }}
                         </button>
                         <button type="button" class="btn btn-sm btn-outline-danger" data-featured-remove
@@ -290,6 +311,12 @@
                 <div class="ag-card__header">
                     <h2 class="ag-card__title">Images du contenu</h2>
                 </div>
+                @if($site->hasCredentials())
+                    <p class="ag-hint px-3 pt-2 mb-0">
+                        <i class="bi bi-cloud-arrow-up me-1" aria-hidden="true"></i>
+                        Glissez-déposez une image sur une ligne pour la remplacer.
+                    </p>
+                @endif
                 <div class="ag-card__body" id="ag-content-images"></div>
             </div>
         </div>

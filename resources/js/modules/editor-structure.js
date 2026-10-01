@@ -85,7 +85,7 @@ export function createOutline(container, { onSelect }) {
                     const level = i + 1;
                     // Le titre de l'article est déjà le H1 de la page : un H1
                     // de plus dans le contenu est une anomalie.
-                    const danger = level === 1 && count > 1;
+                    const danger = level === 1 && count > 0;
                     const classes = ['ag-hcount', count === 0 ? 'is-empty' : '', danger ? 'is-danger' : '']
                         .filter(Boolean)
                         .join(' ');

@@ -22,6 +22,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
  * Sites WordPress.
@@ -64,6 +65,25 @@ class SiteController extends Controller
             // la vue doit pouvoir dire que rien n'avance.
             'queueStalled' => $this->queue->needsManualWorker(),
         ]);
+    }
+
+    /**
+     * Extension WordPress « ArticleGuard Cache Bridge », en .zip prêt à
+     * téléverser (Extensions › Ajouter › Téléverser une extension).
+     */
+    public function cacheBridge(): BinaryFileResponse
+    {
+        $source = resource_path('wordpress/articleguard-cache-bridge/articleguard-cache-bridge.php');
+        $zipPath = storage_path('app/articleguard-cache-bridge.zip');
+
+        if (! is_file($zipPath) || filemtime($zipPath) < filemtime($source)) {
+            $zip = new \ZipArchive;
+            $zip->open($zipPath, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
+            $zip->addFile($source, 'articleguard-cache-bridge/articleguard-cache-bridge.php');
+            $zip->close();
+        }
+
+        return response()->download($zipPath, 'articleguard-cache-bridge.zip', ['Content-Type' => 'application/zip']);
     }
 
     public function create(): View

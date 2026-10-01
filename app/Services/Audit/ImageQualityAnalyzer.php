@@ -37,7 +37,12 @@ class ImageQualityAnalyzer
 
         $existing = ImageAnalysis::where('url_hash', $hash)->first();
 
-        if ($existing && ! $forceRefresh && $existing->isFresh($ttl)) {
+        // Une analyse antérieure à l'empreinte visuelle est complétée une fois.
+        $lacksFingerprint = $existing?->status === ImageAnalysis::STATUS_OK
+            && $existing->fingerprint === null
+            && $existing->error_code === null;
+
+        if ($existing && ! $forceRefresh && ! $lacksFingerprint && $existing->isFresh($ttl)) {
             return $existing;
         }
 
@@ -172,6 +177,7 @@ class ImageQualityAnalyzer
 
         try {
             $sharpness = $this->laplacianVariance($image);
+            $fingerprint = $this->visualHash($image);
         } finally {
             imagedestroy($image);
         }
@@ -183,7 +189,67 @@ class ImageQualityAnalyzer
             'error_code' => null,
             'sharpness' => $sharpness,
             'is_blurry' => $sharpness !== null ? $sharpness < $threshold : null,
+            'fingerprint' => $fingerprint,
         ];
+    }
+
+    /**
+     * Empreinte visuelle (dHash 64 bits, 16 caractères hexadécimaux).
+     *
+     * L'image est réduite à 9×8 en niveaux de gris ; chaque bit indique si un
+     * pixel est plus clair que son voisin de droite. Deux fichiers différents
+     * de la même photo (téléversée deux fois, recompressée, redimensionnée)
+     * donnent la même empreinte, ou presque : on compare la distance de
+     * Hamming (voir `similar()`).
+     */
+    protected function visualHash(\GdImage $image): string
+    {
+        $width = imagesx($image);
+        $height = imagesy($image);
+
+        // Pixel de suivi, icône minuscule : pas d'empreinte exploitable (chaîne
+        // vide plutôt que null, pour ne pas la recalculer à chaque audit).
+        if ($width < 2 || $height < 2) {
+            return '';
+        }
+
+        $small = imagecreatetruecolor(9, 8);
+        imagecopyresampled($small, $image, 0, 0, 0, 0, 9, 8, $width, $height);
+        imagefilter($small, IMG_FILTER_GRAYSCALE);
+
+        $bits = '';
+        for ($y = 0; $y < 8; $y++) {
+            for ($x = 0; $x < 8; $x++) {
+                $bits .= (imagecolorat($small, $x, $y) & 0xFF) > (imagecolorat($small, $x + 1, $y) & 0xFF) ? '1' : '0';
+            }
+        }
+
+        imagedestroy($small);
+
+        $hex = '';
+        foreach (str_split($bits, 4) as $nibble) {
+            $hex .= dechex((int) bindec($nibble));
+        }
+
+        return $hex;
+    }
+
+    /**
+     * Deux empreintes désignent-elles la même image ? Une petite distance est
+     * tolérée (recompression, légère retouche).
+     */
+    public static function similar(?string $a, ?string $b, int $maxDistance = 6): bool
+    {
+        if ($a === null || $b === null || strlen($a) !== 16 || strlen($b) !== 16) {
+            return false;
+        }
+
+        $distance = 0;
+        for ($i = 0; $i < 16; $i++) {
+            $distance += substr_count(decbin(hexdec($a[$i]) ^ hexdec($b[$i])), '1');
+        }
+
+        return $distance <= $maxDistance;
     }
 
     /**
