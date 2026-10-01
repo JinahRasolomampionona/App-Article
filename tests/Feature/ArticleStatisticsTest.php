@@ -69,19 +69,33 @@ class ArticleStatisticsTest extends TestCase
         $this->assertSame(87, $overview['rate']);
     }
 
-    public function test_le_detail_par_site_reprend_les_memes_compteurs(): void
+    public function test_le_detail_par_site_reprend_les_compteurs_des_quatre_cartes(): void
     {
         $this->articles(4, WordpressArticle::AUDIT_OK);
         $this->articles(1, WordpressArticle::AUDIT_NEEDS_FIX);
 
+        // Deux articles déclarés corrigés par un agent : l'un conforme, l'autre
+        // encore « À corriger » à l'audit — tous deux comptent en « Corrigés ».
+        $done = WordpressArticle::query()->orderBy('id')->take(1)->get()
+            ->merge(WordpressArticle::query()->where('audit_status', WordpressArticle::AUDIT_NEEDS_FIX)->get());
+        $done->each(fn (WordpressArticle $article) => $article->forceFill(['completed_at' => now()->subDay()])->save());
+
         $rows = $this->statistics->perSite(StatisticsFilter::forAdmin($this->user));
+        $cards = $this->statistics->statusCards(null);
 
         $this->assertCount(1, $rows);
         $this->assertSame('bijouteries.top', $rows[0]['name']);
         $this->assertSame(5, $rows[0]['articles']);
-        $this->assertSame(4, $rows[0]['corrected']);
-        $this->assertSame(1, $rows[0]['needs_fix']);
-        $this->assertSame(80, $rows[0]['rate']);
+        $this->assertSame(0, $rows[0]['needs_fix']);
+        $this->assertSame(3, $rows[0]['to_review']);
+        $this->assertSame(2, $rows[0]['fixed']);
+        $this->assertNotNull($rows[0]['last_corrected_at']);
+
+        // Exactement les chiffres des cartes.
+        $this->assertSame(
+            [$cards['total'], $cards['needs_fix'], $cards['to_review'], $cards['fixed']],
+            [$rows[0]['articles'], $rows[0]['needs_fix'], $rows[0]['to_review'], $rows[0]['fixed']],
+        );
     }
 
     public function test_l_espace_partage_compte_tous_les_sites_et_se_filtre_par_site(): void

@@ -75,15 +75,36 @@ class ArticleStatisticsService
      */
     public function statusCards(?int $siteId): array
     {
-        $row = WordpressArticle::query()
-            ->when($siteId, fn (Builder $q) => $q->where('wordpress_site_id', $siteId))
+        $row = $this->statusCounts(
+            WordpressArticle::query()->when($siteId, fn (Builder $q) => $q->where('wordpress_site_id', $siteId))
+        )->first();
+
+        return $this->statusRow($row);
+    }
+
+    /**
+     * Comptages des quatre cartes, sur la requête donnée (éventuellement
+     * groupée par site) : une seule définition pour les cartes et le tableau
+     * « Par site ».
+     *
+     * @param  Builder<WordpressArticle>  $query
+     * @return Builder<WordpressArticle>
+     */
+    protected function statusCounts(Builder $query): Builder
+    {
+        return $query
             ->selectRaw('count(*) as total')
             ->selectRaw('sum(case when completed_at is not null then 1 else 0 end) as done')
             ->selectRaw('sum(case when completed_at is null and audit_status = ? then 1 else 0 end) as needs_fix', [WordpressArticle::AUDIT_NEEDS_FIX])
             ->selectRaw('sum(case when completed_at is null and audit_status in (?, ?) then 1 else 0 end) as to_review', [WordpressArticle::AUDIT_OK, WordpressArticle::AUDIT_FIXED])
-            ->selectRaw('sum(case when completed_at is null and audit_status = ? then 1 else 0 end) as pending', [WordpressArticle::AUDIT_PENDING])
-            ->first();
+            ->selectRaw('sum(case when completed_at is null and audit_status = ? then 1 else 0 end) as pending', [WordpressArticle::AUDIT_PENDING]);
+    }
 
+    /**
+     * @return array{total: int, needs_fix: int, to_review: int, fixed: int, pending: int}
+     */
+    protected function statusRow(?object $row): array
+    {
         return [
             'total' => (int) ($row->total ?? 0),
             'needs_fix' => (int) ($row->needs_fix ?? 0),
@@ -118,8 +139,10 @@ class ArticleStatisticsService
     }
 
     /**
-     * Détail par site connecté, du moins conforme au plus conforme : les sites
-     * qui demandent du travail arrivent en tête. Réservé à l'Admin.
+     * Détail par site connecté, sur le principe des quatre cartes : Articles,
+     * Non corrigés (« À corriger »), Non vérifiés (« À vérifier »), Corrigés
+     * (déclarés corrigés par un agent). Les sites qui ont le plus d'articles à
+     * corriger arrivent en tête. Réservé à l'Admin.
      *
      * @return array<int, array<string, mixed>>
      */
@@ -135,53 +158,43 @@ class ArticleStatisticsService
             return [];
         }
 
-        $counts = WordpressArticle::query()
-            ->whereIn('wordpress_site_id', $sites->pluck('id'))
-            ->selectRaw('wordpress_site_id, audit_status, count(*) as total')
-            ->groupBy('wordpress_site_id', 'audit_status')
-            ->get()
-            ->groupBy('wordpress_site_id');
+        $counts = $this->statusCounts(
+            WordpressArticle::query()
+                ->whereIn('wordpress_site_id', $sites->pluck('id'))
+                ->addSelect('wordpress_site_id')
+                ->selectRaw('max(completed_at) as last_completed_at')
+                ->groupBy('wordpress_site_id')
+        )->get()->keyBy('wordpress_site_id');
 
-        $inProgress = WordpressArticle::query()
-            ->locked()
-            ->selectRaw('wordpress_site_id, count(*) as total')
-            ->groupBy('wordpress_site_id')
-            ->pluck('total', 'wordpress_site_id');
-
-        // Dernière correction connue par site, prise dans l'historique.
+        // Repli sur l'historique : un article corrigé puis réassigné n'a plus
+        // de date de correction, mais la correction a bien eu lieu.
         $lastCorrections = ArticleStatusHistory::query()
             ->whereIn('wordpress_site_id', $sites->pluck('id'))
             ->selectRaw('wordpress_site_id, max(recorded_at) as last_recorded_at')
             ->groupBy('wordpress_site_id')
             ->pluck('last_recorded_at', 'wordpress_site_id');
 
-        $rows = $sites->map(function ($site) use ($counts, $lastCorrections, $inProgress) {
-            $byStatus = ($counts->get($site->id) ?? collect())->pluck('total', 'audit_status');
+        $rows = $sites->map(function ($site) use ($counts, $lastCorrections) {
+            $row = $counts->get($site->id);
+            $status = $this->statusRow($row);
 
-            $ok = (int) $byStatus->get(WordpressArticle::AUDIT_OK, 0);
-            $fixed = (int) $byStatus->get(WordpressArticle::AUDIT_FIXED, 0);
-            $needsFix = (int) $byStatus->get(WordpressArticle::AUDIT_NEEDS_FIX, 0);
-            $pending = (int) $byStatus->get(WordpressArticle::AUDIT_PENDING, 0);
-            $total = $ok + $fixed + $needsFix + $pending;
+            $dates = array_filter([$row->last_completed_at ?? null, $lastCorrections[$site->id] ?? null]);
 
             return [
                 'site' => $site,
                 'name' => $site->name,
                 'url' => $site->url,
-                'articles' => $total,
-                'ok' => $ok,
-                'fixed' => $fixed,
-                'corrected' => $ok + $fixed,
-                'needs_fix' => $needsFix,
-                'pending' => $pending,
-                'in_progress' => (int) ($inProgress[$site->id] ?? 0),
-                'rate' => $total > 0 ? (int) round((($ok + $fixed) / $total) * 100) : 0,
-                'last_corrected_at' => $lastCorrections[$site->id] ?? null,
+                'articles' => $status['total'],
+                'needs_fix' => $status['needs_fix'],
+                'to_review' => $status['to_review'],
+                'fixed' => $status['fixed'],
+                'pending' => $status['pending'],
+                'last_corrected_at' => $dates === [] ? null : max(array_map(fn ($date) => (string) $date, $dates)),
                 'archived' => false,
             ];
         });
 
-        return $rows->sortBy('rate')->values()->all();
+        return $rows->sortBy([['needs_fix', 'desc'], ['to_review', 'desc'], ['name', 'asc']])->values()->all();
     }
 
     /**
