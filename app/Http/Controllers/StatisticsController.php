@@ -52,7 +52,12 @@ class StatisticsController extends Controller
         abort_unless($user->isAgent(), 404);
 
         $filter = StatisticsFilter::fromRequest($request);
-        $articles = $this->statistics->agentArticles($user, $filter->siteId);
+        $articles = $this->statistics->agentArticles(
+            $user,
+            $filter->siteId,
+            correctedFrom: $filter->from,
+            correctedTo: $filter->to,
+        );
 
         // Dernière fin de traitement de l'agent pour chaque article affiché :
         // la liste des erreurs qu'il a corrigées.
@@ -70,6 +75,7 @@ class StatisticsController extends Controller
             'articles' => $articles,
             'completions' => $completions,
             'siteFilter' => $filter->siteId,
+            'withDates' => true,
             'userSites' => WordpressSite::query()->accessibleBy($filter->viewer, includeDone: true)->orderBy('name')->get(['id', 'name']),
             'agents' => AgentCatalog::all(),
         ]);

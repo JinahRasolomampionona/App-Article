@@ -172,7 +172,11 @@
                     <tr>
                         <td colspan="7">
                             <p class="ag-hint mb-0 py-4 text-center">
-                                {{ $agent->name }} n’a aucun article en cours ni corrigé
+                                @if($filter->from || $filter->to)
+                                    {{ $agent->name }} n’a corrigé aucun article ce jour-là
+                                @else
+                                    {{ $agent->name }} n’a aucun article en cours ni corrigé
+                                @endif
                                 @if($siteFilter) sur ce site @endif.
                             </p>
                         </td>

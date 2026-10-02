@@ -7,6 +7,7 @@ use App\Models\ArticleStatusHistory;
 use App\Models\User;
 use App\Models\WordpressArticle;
 use App\Models\WordpressSite;
+use Carbon\CarbonInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
@@ -121,14 +122,27 @@ class ArticleStatisticsService
      *
      * @return LengthAwarePaginator<int, WordpressArticle>
      */
-    public function agentArticles(User $agent, ?int $siteId, int $perPage = 20): LengthAwarePaginator
-    {
+    public function agentArticles(
+        User $agent,
+        ?int $siteId,
+        int $perPage = 20,
+        ?CarbonInterface $correctedFrom = null,
+        ?CarbonInterface $correctedTo = null,
+    ): LengthAwarePaginator {
+        // Filtre de date : seuls les articles corrigés dans la période, les
+        // articles en cours n'ayant pas encore de date de correction.
+        $byDate = $correctedFrom !== null || $correctedTo !== null;
+
         return WordpressArticle::query()
             ->when($siteId, fn (Builder $q) => $q->where('wordpress_site_id', $siteId))
-            ->where(function (Builder $q) use ($agent) {
+            ->when($byDate, fn (Builder $q) => $q
+                ->where('completed_by', $agent->id)
+                ->when($correctedFrom, fn (Builder $q) => $q->where('completed_at', '>=', $correctedFrom->startOfDay()))
+                ->when($correctedTo, fn (Builder $q) => $q->where('completed_at', '<=', $correctedTo->endOfDay())))
+            ->unless($byDate, fn (Builder $q) => $q->where(function (Builder $q) use ($agent) {
                 $q->where('completed_by', $agent->id)
                     ->orWhere(fn (Builder $inner) => $inner->locked()->where('assigned_to', $agent->id));
-            })
+            }))
             ->with(['site:id,name,url', 'openIssues:id,wordpress_article_id,rule_type,severity,message', 'notes.author:id,name', 'assignee:id,name'])
             // En cours d'abord, puis les corrections les plus récentes.
             ->orderByRaw('case when completed_at is null then 0 else 1 end')

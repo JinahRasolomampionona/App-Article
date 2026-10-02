@@ -39,13 +39,16 @@ final class StatisticsFilter
             ? (string) $request->query('status')
             : null;
 
+        // `date` : un jour précis (page d'un agent), prioritaire sur from/to.
+        $day = self::date($request->query('date'));
+
         return new self(
             viewer: $viewer,
             siteId: $siteId,
             agent: $viewer->isAdmin() ? self::agentParam($request->query('agent')) : $viewer->id,
             status: $status,
-            from: self::date($request->query('from')),
-            to: self::date($request->query('to'))?->endOfDay(),
+            from: $day ?? self::date($request->query('from')),
+            to: ($day ?? self::date($request->query('to')))?->endOfDay(),
         );
     }
 

@@ -353,6 +353,45 @@ class ArticleStatisticsTest extends TestCase
             ->assertSee('Commenter', false);
     }
 
+    public function test_voir_un_agent_se_filtre_par_date_de_correction(): void
+    {
+        $old = WordpressArticle::factory()->for($this->site, 'site')->create(['title' => 'Corrigé en août']);
+        $agent = $this->declareFixed($old);
+        $old->forceFill(['completed_at' => '2026-08-12 10:00:00'])->save();
+
+        $recent = WordpressArticle::factory()->for($this->site, 'site')->create(['title' => 'Corrigé en septembre']);
+        $recent->forceFill(['completed_by' => $agent->id, 'completed_at' => '2026-09-20 15:30:00'])->save();
+
+        $inProgress = WordpressArticle::factory()->for($this->site, 'site')->create(['title' => 'Encore en cours']);
+        $this->lockFor($inProgress, $agent);
+
+        // Un jour précis.
+        $this->actingAs($this->user)
+            ->get(route('statistics.agent', [$agent, 'date' => '2026-09-20']))
+            ->assertOk()
+            ->assertSee('Corrigé en septembre', false)
+            ->assertDontSee('Corrigé en août', false)
+            ->assertDontSee('Encore en cours', false)
+            ->assertSee('Articles corrigés le', false);
+
+        // Combiné au filtre de site.
+        $this->actingAs($this->user)
+            ->get(route('statistics.agent', [$agent, 'site' => $this->site->id, 'date' => '2026-08-12']))
+            ->assertSee('Corrigé en août', false)
+            ->assertDontSee('Corrigé en septembre', false);
+
+        // Un jour sans correction.
+        $this->actingAs($this->user)
+            ->get(route('statistics.agent', [$agent, 'date' => '2026-09-21']))
+            ->assertSee('n’a corrigé aucun article ce jour-là', false);
+
+        // Sans date : articles en cours et corrigés, comme avant.
+        $this->actingAs($this->user)
+            ->get(route('statistics.agent', $agent))
+            ->assertSee('Encore en cours', false)
+            ->assertSee('Corrigé en août', false);
+    }
+
     public function test_le_menu_statistiques_est_place_au_dessus_des_parametres(): void
     {
         $response = $this->actingAs($this->user)->get(route('dashboard'));
