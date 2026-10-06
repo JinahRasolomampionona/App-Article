@@ -54,6 +54,9 @@ export function createMediaPicker() {
     let selected = null;
     let resolver = null;
     let loaded = false;
+    // Dernière version connue de chaque média de la grille : une vignette ne
+    // doit pas resservir les détails d'avant un enregistrement.
+    const known = new Map();
 
     /* --- Détails du fichier joint ------------------------------------------- */
 
@@ -90,10 +93,22 @@ export function createMediaPicker() {
         }
     }
 
-    details.save?.addEventListener('click', async () => {
-        if (!selected?.id) return;
+    const fieldKeys = { alt_text: 'alt', title: 'title', caption: 'caption', description: 'description' };
 
-        const done = busy(details.save, 'Enregistrement…');
+    /** Vrai si un champ du panneau diffère de ce qui est enregistré sur WordPress. */
+    function detailsDirty() {
+        if (!selected?.id || readOnly || !details.body || details.body.hidden) return false;
+
+        return Object.entries(fieldKeys).some(
+            ([field, key]) => (details.fields[field]?.value ?? '') !== (selected[key] ?? ''),
+        );
+    }
+
+    /** Enregistre les détails sur WordPress ; renvoie faux en cas d'échec. */
+    async function saveDetails(button) {
+        if (!selected?.id) return false;
+
+        const done = busy(button, 'Enregistrement…');
 
         try {
             const data = await http.put(`${indexUrl}/${selected.id}`, {
@@ -104,15 +119,20 @@ export function createMediaPicker() {
             });
 
             selected = { ...selected, ...data.media };
+            known.set(String(selected.id), selected);
             showDetails(selected);
             refreshTile(selected);
             notify.success(data.message);
+            return true;
         } catch (error) {
             notify.error(error.message);
+            return false;
         } finally {
             done();
         }
-    });
+    }
+
+    details.save?.addEventListener('click', () => saveDetails(details.save));
 
     element.querySelector('[data-media-copy-url]')?.addEventListener('click', async () => {
         if (!details.url?.value) return;
@@ -169,6 +189,8 @@ export function createMediaPicker() {
             grid.innerHTML = '';
 
             data.items.forEach((media) => {
+                known.set(String(media.id), media);
+
                 const tile = document.createElement('button');
                 tile.type = 'button';
                 tile.className = 'ag-media-tile';
@@ -182,7 +204,7 @@ export function createMediaPicker() {
                 img.loading = 'lazy';
 
                 tile.appendChild(img);
-                tile.addEventListener('click', () => select(media, tile));
+                tile.addEventListener('click', () => select(known.get(String(media.id)) ?? media, tile));
                 grid.appendChild(tile);
             });
         } catch (error) {
@@ -278,7 +300,11 @@ export function createMediaPicker() {
         onDrop: (file) => uploadInModal(file),
     });
 
-    confirm?.addEventListener('click', () => {
+    confirm?.addEventListener('click', async () => {
+        // Titre ou texte alternatif saisi sans cliquer « Enregistrer » : on
+        // l'enregistre avant d'utiliser l'image, sinon il serait perdu.
+        if (detailsDirty() && !(await saveDetails(confirm))) return;
+
         modal.hide();
         resolver?.(selected);
         resolver = null;
