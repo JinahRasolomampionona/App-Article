@@ -28,6 +28,9 @@ return [
         // Mise à jour d'un article : WordPress exécute tous les hooks de
         // sauvegarde (SEO, cache…), souvent plus lents qu'une lecture.
         'write_timeout' => (int) env('WP_HTTP_WRITE_TIMEOUT', 90),
+        // Téléversement d'image : WordPress crée toutes les déclinaisons
+        // avant de répondre.
+        'upload_timeout' => (int) env('WP_HTTP_UPLOAD_TIMEOUT', 180),
         'connect_timeout' => (int) env('WP_HTTP_CONNECT_TIMEOUT', 8),
         'retry_times' => (int) env('WP_HTTP_RETRY_TIMES', 2),
         'retry_sleep' => (int) env('WP_HTTP_RETRY_SLEEP', 300),

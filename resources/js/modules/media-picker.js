@@ -4,6 +4,7 @@ import { notify } from './toast.js';
 import { busy, debounce } from './busy.js';
 import { fileNameOf } from './url.js';
 import { bindDropzone, pickFile, rejectReason } from './dropzone.js';
+import { shrinkImage } from './image-resize.js';
 
 /**
  * Sélecteur d'image branché sur la médiathèque WordPress.
@@ -246,7 +247,7 @@ export function createMediaPicker() {
         if (reason) throw new Error(reason);
 
         const data = new FormData();
-        data.append('file', file);
+        data.append('file', await shrinkImage(file));
 
         const result = await http.post(storeUrl, data);
         // La grille sera rechargée à la prochaine ouverture.
@@ -255,8 +256,12 @@ export function createMediaPicker() {
         return result;
     }
 
+    // Un second dépôt pendant un envoi lent créerait un doublon dans la
+    // médiathèque.
+    let uploading = false;
+
     async function uploadInModal(file) {
-        if (!file || readOnly) return;
+        if (!file || readOnly || uploading) return;
 
         const reason = rejectReason(file);
         if (reason) {
@@ -264,6 +269,7 @@ export function createMediaPicker() {
             return;
         }
 
+        uploading = true;
         const restoreTitle = dropzoneTitle?.textContent;
         dropzone?.classList.add('is-busy');
         if (dropzoneTitle) dropzoneTitle.textContent = `Téléversement de « ${file.name} »…`;
@@ -284,6 +290,7 @@ export function createMediaPicker() {
         } catch (error) {
             notify.error(error.message);
         } finally {
+            uploading = false;
             done.forEach((restore) => restore());
             dropzone?.classList.remove('is-busy');
             if (dropzoneTitle) dropzoneTitle.textContent = restoreTitle;

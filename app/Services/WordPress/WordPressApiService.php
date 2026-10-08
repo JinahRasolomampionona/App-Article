@@ -684,14 +684,24 @@ class WordPressApiService
         }
 
         $url = $this->endpoint($site, '/media');
+        // WordPress génère toutes les déclinaisons (miniature, moyenne…) avant
+        // de répondre : sur une grande image, bien plus long qu'une lecture.
+        $timeout = max(
+            (int) config('articleguard.http.timeout'),
+            (int) config('articleguard.http.upload_timeout', 180),
+        );
 
+        // Écriture : un délai dépassé en attendant la réponse ne doit pas
+        // renvoyer le fichier, WordPress l'a déjà reçu et créerait un doublon.
         $response = $this->send(
             $site,
             fn (PendingRequest $request) => $request
+                ->timeout($timeout)
                 ->withBody($contents, $mime)
                 ->withHeaders(['Content-Disposition' => 'attachment; filename="'.addslashes($filename).'"'])
                 ->post($url),
             $url,
+            write: true,
         );
 
         return $this->decode($response);

@@ -172,6 +172,31 @@ class WordPressApiServiceTest extends TestCase
         Http::assertSent(fn (Request $request) => str_contains($request->url(), 'per_page=10'));
     }
 
+    /**
+     * WordPress a reçu le fichier et génère ses déclinaisons : renvoyer la
+     * requête après un délai dépassé créerait l'image en double.
+     */
+    public function test_un_televersement_trop_lent_n_est_pas_renvoye(): void
+    {
+        config(['articleguard.http.retry_times' => 3, 'articleguard.http.retry_sleep' => 0]);
+        $this->site->update(['wp_username' => 'editeur', 'application_password' => 'abcd efgh ijkl mnop']);
+        $attempts = 0;
+
+        Http::fake(function () use (&$attempts) {
+            $attempts++;
+            throw new ConnectionException('cURL error 28: Operation timed out after 180001 milliseconds with 0 bytes received');
+        });
+
+        try {
+            $this->api->uploadMedia($this->site->fresh(), 'binaire', 'photo.jpg', 'image/jpeg');
+            $this->fail('Une exception était attendue.');
+        } catch (WordPressApiException) {
+            // Attendu : délai dépassé.
+        }
+
+        $this->assertSame(1, $attempts);
+    }
+
     public function test_les_reponses_sont_demandees_compressees(): void
     {
         Http::fake(['*' => Http::response([], 200, ['X-WP-Total' => 0, 'X-WP-TotalPages' => 1])]);
