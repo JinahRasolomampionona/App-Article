@@ -4,15 +4,15 @@
  * WordPress ramène de toute façon toute image de plus de 2560 px à cette
  * taille (« big_image_size_threshold ») : envoyer l'original de 6000 px ne
  * fait qu'allonger le transfert et la génération des déclinaisons côté site.
- * On réduit donc dans le navigateur, sans perte visible par rapport au
- * résultat final.
+ * À 2048 px, largement assez pour une image d'article, WordPress n'a en plus
+ * ni copie « -scaled » ni déclinaison 2048 à produire.
  */
 
-export const MAX_DIMENSION = 2560;
+export const MAX_DIMENSION = 2048;
 
 // GIF exclu : un canvas n'en garderait que la première image.
 const RESIZABLE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-const QUALITY = 0.86;
+const QUALITY = 0.82;
 
 /**
  * Renvoie un fichier réduit, ou le fichier d'origine s'il est déjà assez

@@ -68,21 +68,72 @@ async function request(url, { method = 'GET', body = null, headers = {}, signal 
     }
 
     if (!response.ok) {
-        // Laravel renvoie `errors` pour une validation, `message` sinon.
-        const firstValidationError = payload?.errors
-            ? Object.values(payload.errors).flat()[0]
-            : null;
-
-        throw new HttpError(
-            firstValidationError ||
-                payload?.message ||
-                "Une erreur est survenue. L'action n'a pas été effectuée.",
-            response.status,
-            payload,
-        );
+        throw errorFrom(response.status, payload);
     }
 
     return payload;
+}
+
+function errorFrom(status, payload) {
+    // Laravel renvoie `errors` pour une validation, `message` sinon.
+    const firstValidationError = payload?.errors
+        ? Object.values(payload.errors).flat()[0]
+        : null;
+
+    return new HttpError(
+        firstValidationError ||
+            payload?.message ||
+            "Une erreur est survenue. L'action n'a pas été effectuée.",
+        status,
+        payload,
+    );
+}
+
+/**
+ * Envoi de fichier avec suivi de progression, que `fetch` ne permet pas.
+ * `onProgress(ratio)` reçoit la part envoyée (0 à 1) ; à 1, le fichier est
+ * parti et le serveur le traite.
+ */
+function upload(url, body, { onProgress } = {}) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url);
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        xhr.setRequestHeader('X-CSRF-TOKEN', csrfToken());
+
+        xhr.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable) onProgress?.(event.loaded / event.total);
+        });
+
+        xhr.addEventListener('load', () => {
+            let payload = null;
+
+            try {
+                payload = xhr.responseText ? JSON.parse(xhr.responseText) : null;
+            } catch {
+                payload = null;
+            }
+
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(payload);
+            } else {
+                reject(errorFrom(xhr.status, payload));
+            }
+        });
+
+        xhr.addEventListener('error', () =>
+            reject(
+                new HttpError(
+                    'Connexion au serveur impossible. Vérifiez votre réseau puis réessayez.',
+                    0,
+                    null,
+                ),
+            ),
+        );
+
+        xhr.send(body);
+    });
 }
 
 export const http = {
@@ -90,4 +141,5 @@ export const http = {
     post: (url, body, options) => request(url, { ...options, method: 'POST', body }),
     put: (url, body, options) => request(url, { ...options, method: 'PUT', body }),
     delete: (url, options) => request(url, { ...options, method: 'DELETE' }),
+    upload,
 };

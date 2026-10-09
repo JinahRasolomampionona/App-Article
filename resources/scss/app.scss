@@ -2580,3 +2580,27 @@ html.ag-nav-collapsed .ag-sidebar {
         transition-duration: 0.001ms !important;
     }
 }
+
+// Étape du téléversement (« Envoi… 42 % ») par-dessus l'image à la une ou
+// la ligne d'image concernée.
+.is-busy[data-upload-status] {
+    position: relative;
+    opacity: 1;
+
+    &::after {
+        content: attr(data-upload-status);
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        border-radius: inherit;
+        text-align: center;
+        font-weight: 600;
+        font-size: 0.8125rem;
+        color: var(--ag-primary-dark);
+        background: rgba(255, 255, 255, 0.88);
+    }
+}

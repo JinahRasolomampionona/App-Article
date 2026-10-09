@@ -691,6 +691,8 @@ class WordPressApiService
             (int) config('articleguard.http.upload_timeout', 180),
         );
 
+        $started = microtime(true);
+
         // Écriture : un délai dépassé en attendant la réponse ne doit pas
         // renvoyer le fichier, WordPress l'a déjà reçu et créerait un doublon.
         $response = $this->send(
@@ -703,6 +705,15 @@ class WordPressApiService
             $url,
             write: true,
         );
+
+        // Presque tout ce temps est passé chez WordPress (déclinaisons,
+        // extensions d'optimisation d'images) : de quoi savoir où chercher.
+        Log::info('Image téléversée sur WordPress', [
+            'site_id' => $site->id,
+            'file' => $filename,
+            'kb' => (int) round(strlen($contents) / 1024),
+            'seconds' => round(microtime(true) - $started, 1),
+        ]);
 
         return $this->decode($response);
     }

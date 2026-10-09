@@ -260,7 +260,11 @@ export function initEditor() {
         zone?.classList.add('is-busy');
 
         try {
-            const result = await picker.upload(file);
+            const result = await picker.upload(file, {
+                onStatus: (text) => {
+                    if (zone) zone.dataset.uploadStatus = text;
+                },
+            });
             notify.success(result.message);
             return result.media;
         } catch (error) {
@@ -268,6 +272,7 @@ export function initEditor() {
             return null;
         } finally {
             zone?.classList.remove('is-busy');
+            delete zone?.dataset.uploadStatus;
         }
     }
 

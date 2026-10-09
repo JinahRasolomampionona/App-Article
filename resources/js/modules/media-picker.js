@@ -188,29 +188,31 @@ export function createMediaPicker() {
             }
 
             grid.innerHTML = '';
-
-            data.items.forEach((media) => {
-                known.set(String(media.id), media);
-
-                const tile = document.createElement('button');
-                tile.type = 'button';
-                tile.className = 'ag-media-tile';
-                tile.dataset.mediaId = String(media.id);
-                tile.title = media.title || media.alt || media.url;
-                tile.setAttribute('aria-label', media.title || media.alt || 'Image sans titre');
-
-                const img = document.createElement('img');
-                img.src = media.thumbnail || media.url;
-                img.alt = media.alt || '';
-                img.loading = 'lazy';
-
-                tile.appendChild(img);
-                tile.addEventListener('click', () => select(known.get(String(media.id)) ?? media, tile));
-                grid.appendChild(tile);
-            });
+            data.items.forEach((media) => grid.appendChild(createTile(media)));
         } catch (error) {
             grid.innerHTML = `<p class="text-danger mb-0" style="grid-column:1/-1">${error.message}</p>`;
         }
+    }
+
+    function createTile(media) {
+        known.set(String(media.id), media);
+
+        const tile = document.createElement('button');
+        tile.type = 'button';
+        tile.className = 'ag-media-tile';
+        tile.dataset.mediaId = String(media.id);
+        tile.title = media.title || media.alt || media.url;
+        tile.setAttribute('aria-label', media.title || media.alt || 'Image sans titre');
+
+        const img = document.createElement('img');
+        img.src = media.thumbnail || media.url;
+        img.alt = media.alt || '';
+        img.loading = 'lazy';
+
+        tile.appendChild(img);
+        tile.addEventListener('click', () => select(known.get(String(media.id)) ?? media, tile));
+
+        return tile;
     }
 
     search?.addEventListener(
@@ -241,15 +243,27 @@ export function createMediaPicker() {
      * Envoie un fichier dans la médiathèque WordPress et renvoie le média
      * créé. Partagé avec l'éditeur (dépôt sur l'image à la une ou sur une
      * image du contenu).
+     *
+     * `onStatus(texte)` décrit l'étape en cours : sur une connexion lente,
+     * l'utilisateur voit que l'envoi avance au lieu d'un écran figé.
      */
-    async function uploadFile(file) {
+    async function uploadFile(file, { onStatus } = {}) {
         const reason = rejectReason(file);
         if (reason) throw new Error(reason);
+
+        onStatus?.('Préparation de l’image…');
 
         const data = new FormData();
         data.append('file', await shrinkImage(file));
 
-        const result = await http.post(storeUrl, data);
+        const result = await http.upload(storeUrl, data, {
+            onProgress: (ratio) =>
+                onStatus?.(
+                    ratio < 1
+                        ? `Envoi… ${Math.round(ratio * 100)} %`
+                        : 'Création des miniatures par WordPress…',
+                ),
+        });
         // La grille sera rechargée à la prochaine ouverture.
         loaded = false;
 
@@ -276,17 +290,30 @@ export function createMediaPicker() {
         const done = Array.from(uploadButtons).map((button) => busy(button, 'Envoi…'));
 
         try {
-            const result = await uploadFile(file);
+            const result = await uploadFile(file, {
+                onStatus: (text) => {
+                    if (dropzoneTitle) dropzoneTitle.textContent = `${file.name} — ${text}`;
+                },
+            });
             notify.success(result.message);
 
             // Comme WordPress : retour à la médiathèque, nouvelle image
-            // sélectionnée, prête à être utilisée.
+            // sélectionnée, prête à être utilisée. La vignette est ajoutée en
+            // tête de grille : recharger toute la médiathèque coûterait un
+            // aller-retour WordPress de plus.
             showTab('library');
+            const tile = createTile(result.media);
+
+            if (grid.querySelector('.ag-media-tile[data-media-id]')) {
+                grid.prepend(tile);
+            } else {
+                grid.innerHTML = '';
+                grid.appendChild(tile);
+            }
+
             loaded = true;
-            await load();
-            await preselect(result.media.id);
-            selected = selected ?? result.media;
-            confirm.disabled = false;
+            select(result.media, tile);
+            tile.scrollIntoView({ block: 'nearest' });
         } catch (error) {
             notify.error(error.message);
         } finally {
